@@ -542,7 +542,13 @@ $pageTitle = "Admin Dashboard - LIU Parking System";
             <div class="menu-item">
                 <a href="gates.php" class="menu-link">
                     <i class="fas fa-door-open"></i>
-                    <span>Gates & Wall Codes</span>
+                    <span>Gates</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="wall_codes.php" class="menu-link">
+                    <i class="fas fa-door-open"></i>
+                    <span>Wall Codes</span>
                 </a>
             </div>
             <div class="menu-item">
