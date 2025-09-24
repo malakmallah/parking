@@ -189,29 +189,7 @@ $totalPages = max(1, (int)ceil($total / $perPage));
 </style>
 </head>
 <body>
-<nav class="sidebar">
-  <div class="sidebar-header">
-    <div class="logo">
-      <?php if (file_exists($liuLogoPath)): ?>
-        <img src="<?= htmlspecialchars($liuLogoPath) ?>" alt="LIU Logo">
-      <?php else: ?><i class="fas fa-car text-white fs-3"></i><?php endif; ?>
-    </div>
-    <h4>LIU Parking</h4><p>Admin Dashboard</p>
-  </div>
-  <div class="sidebar-menu">
-    <a href="index.php" class="menu-link"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a>
-    <a href="users.php" class="menu-link"><i class="fas fa-users"></i><span>Users Management</span></a>
-    <a href="campuses.php" class="menu-link"><i class="fas fa-university"></i><span>Campuses & Blocks</span></a>
-    <a href="spots.php" class="menu-link"><i class="fas fa-parking"></i><span>Parking Spots</span></a>
-    <a href="gates.php" class="menu-link"><i class="fas fa-door-open"></i><span>Gates & Wall Codes</span></a>
-    <a href="sessions.php" class="menu-link"><i class="fas fa-history"></i><span>Parking Sessions</span></a>
-    <a href="cards.php" class="menu-link active"><i class="fas fa-id-card"></i><span>Parking ID Cards</span></a>
-    <a href="reports.php" class="menu-link"><i class="fas fa-chart-bar"></i><span>Reports</span></a>
-    <hr class="text-white-50 my-3">
-    <a href="settings.php" class="menu-link"><i class="fas fa-cog"></i><span>Settings</span></a>
-    <a href="../logout.php" class="menu-link"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>
-  </div>
-</nav>
+<?php include 'includes/sidebar.php'; ?>
 
 <div class="main-content">
   <header class="header">

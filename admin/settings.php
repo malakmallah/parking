@@ -159,67 +159,7 @@ $pageTitle = 'Settings - Change Admin Password';
 <body>
 
 <!-- Sidebar -->
-<nav class="sidebar">
-    <div class="sidebar-header">
-        <div class="logo"><i class="fas fa-car"></i></div>
-        <h4>LIU Parking</h4>
-        <p>Admin Dashboard</p>
-    </div>
-
-    <div class="sidebar-menu">
-        <div class="menu-item">
-            <a href="index.php" class="menu-link">
-                <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="users.php" class="menu-link">
-                <i class="fas fa-users"></i><span>Users Management</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="campuses.php" class="menu-link">
-                <i class="fas fa-university"></i><span>Campuses & Blocks</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="spots.php" class="menu-link">
-                <i class="fas fa-parking"></i><span>Parking Spots</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="gates.php" class="menu-link">
-                <i class="fas fa-door-open"></i><span>Gates & Wall Codes</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="sessions.php" class="menu-link">
-                <i class="fas fa-history"></i><span>Parking Sessions</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="cards.php" class="menu-link">
-                <i class="fas fa-id-card"></i><span>Parking ID Cards</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="reports.php" class="menu-link">
-                <i class="fas fa-chart-bar"></i><span>Reports</span>
-            </a>
-        </div>
-        <hr style="border-color: rgba(255,255,255,0.1); margin: 20px 0;">
-        <div class="menu-item">
-            <a href="settings.php" class="menu-link active">
-                <i class="fas fa-cog"></i><span>Settings</span>
-            </a>
-        </div>
-        <div class="menu-item">
-            <a href="../logout.php" class="menu-link">
-                <i class="fas fa-sign-out-alt"></i><span>Logout</span>
-            </a>
-        </div>
-    </div>
-</nav>
+  <?php include 'includes/sidebar.php'; ?>
 
 <!-- Main -->
 <div class="main-content">

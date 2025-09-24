@@ -236,28 +236,7 @@ body{font-family:'Inter',sans-serif;background:#f5f7fa}
 </head>
 <body>
 <!-- Sidebar -->
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <div style="height:50px">
-      <?php if (file_exists($liuLogoPath)): ?>
-        <img src="<?=htmlspecialchars($liuLogoPath)?>" style="max-height:50px" alt="LIU">
-      <?php else: ?><i class="fa fa-car text-white fs-3"></i><?php endif; ?>
-    </div>
-    <h4>LIU Parking</h4><p>Admin Dashboard</p>
-  </div>
-  <nav>
-    <a class="menu-link" href="index.php"><i class="fas fa-tachometer-alt"></i>Dashboard</a>
-    <a class="menu-link" href="users.php"><i class="fas fa-users"></i>Users Management</a>
-    <a class="menu-link" href="campuses.php"><i class="fas fa-university"></i>Campuses & Blocks</a>
-    <a class="menu-link" href="spots.php"><i class="fas fa-parking"></i>Parking Spots</a>
-    <a class="menu-link" href="gates.php"><i class="fas fa-door-open"></i>Gates & Wall Codes</a>
-    <a class="menu-link active" href="sessions.php"><i class="fas fa-history"></i>Parking Sessions</a>
-    <a class="menu-link" href="cards.php"><i class="fas fa-id-card"></i>Parking ID Cards</a>
-    <hr class="text-white-50 mx-3">
-    <a class="menu-link" href="settings.php"><i class="fas fa-cog"></i>Settings</a>
-    <a class="menu-link" href="../logout.php"><i class="fas fa-sign-out-alt"></i>Logout</a>
-  </nav>
-</aside>
+  <?php include 'includes/sidebar.php'; ?>
 
 <div class="main">
   <header class="header">

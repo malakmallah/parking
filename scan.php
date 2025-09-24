@@ -1,7 +1,7 @@
 <?php
 /**
- * LIU Parking System - QR Code Scanner
- * Main interface for scanning wall-mounted QR codes
+ * LIU Parking System - Dual Scanner (Wall QR + User Barcode)
+ * Complete Entry/Exit System
  */
 
 session_start();
@@ -19,208 +19,200 @@ try {
     die("Database connection error. Please try again later.");
 }
 
-// Handle AJAX requests for QR code processing
+// Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
     
-    if ($_POST['action'] === 'process_qr') {
-        $scanned_code = trim($_POST['scanned_code'] ?? '');
-        $user_email = trim($_POST['user_email'] ?? '');
+    if ($_POST['action'] === 'scan_wall_code') {
+        $wall_code = trim($_POST['wall_code'] ?? '');
+        
+        // Validate wall code exists
+        $stmt = $pdo->prepare("SELECT * FROM wall_codes WHERE code = ?");
+        $stmt->execute([$wall_code]);
+        $wall_data = $stmt->fetch();
+        
+        if ($wall_data) {
+            $_SESSION['selected_wall_code'] = $wall_data;
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'Wall code scanned successfully',
+                'wall_description' => $wall_data['description'],
+                'next_step' => 'user_barcode'
+            ]);
+        } else {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Invalid wall code. Please try again.'
+            ]);
+        }
+        exit;
+    }
+    
+    if ($_POST['action'] === 'scan_user_barcode') {
+        $user_barcode = trim($_POST['user_barcode'] ?? '');
+        
+        if (!isset($_SESSION['selected_wall_code'])) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Please scan wall code first'
+            ]);
+            exit;
+        }
+        
+        $wall_code = $_SESSION['selected_wall_code'];
         
         try {
-            // Validate wall code exists
-            $stmt = $pdo->prepare("SELECT * FROM wall_codes WHERE code = ?");
-            $stmt->execute([$scanned_code]);
-            $wall_code = $stmt->fetch();
-            
-            if (!$wall_code) {
-                echo json_encode([
-                    'status' => 'error',
-                    'message' => 'Invalid QR code. Please scan a valid wall code.',
-                    'type' => 'DENIED'
-                ]);
-                exit;
-            }
-            
-            // Get campus from wall code
-            $campus_code = substr($scanned_code, 0, 3);
-            $stmt = $pdo->prepare("SELECT * FROM campuses WHERE code = ?");
-            $stmt->execute([$campus_code]);
-            $campus = $stmt->fetch();
-            
-            if (!$campus) {
-                echo json_encode([
-                    'status' => 'error',
-                    'message' => 'Campus not found for this QR code.',
-                    'type' => 'DENIED'
-                ]);
-                exit;
-            }
-            
-            // Validate user
+            // Find user by parking number (barcode)
             $stmt = $pdo->prepare("
                 SELECT u.*, c.name as campus_name 
                 FROM users u 
                 LEFT JOIN campuses c ON u.campus_id = c.id
-                WHERE LOWER(u.Email) = LOWER(?) 
-                AND u.role IN ('staff', 'instructor')
+                WHERE u.parking_number = ? AND u.Email IS NOT NULL AND u.Email != ''
             ");
-            $stmt->execute([$user_email]);
+            $stmt->execute([$user_barcode]);
             $user = $stmt->fetch();
             
             if (!$user) {
                 echo json_encode([
                     'status' => 'error',
-                    'message' => 'User not found or not authorized for parking.',
-                    'type' => 'DENIED'
+                    'message' => 'User not found with barcode: ' . $user_barcode
                 ]);
                 exit;
             }
             
-            // Check if user has open parking session
+            // Check if user has active parking session
             $stmt = $pdo->prepare("
-                SELECT ps.*, s.spot_number, c.name as campus_name, b.name as block_name
+                SELECT ps.*, s.spot_number, c.name as campus_name, b.name as block_name,
+                       wc.description as entry_gate
                 FROM parking_sessions ps
                 JOIN parking_spots s ON ps.spot_id = s.id
                 LEFT JOIN campuses c ON s.campus_id = c.id
                 LEFT JOIN blocks b ON s.block_id = b.id
+                LEFT JOIN wall_codes wc ON ps.wall_code_id = wc.id
                 WHERE ps.user_id = ? AND ps.exit_at IS NULL
+                ORDER BY ps.entrance_at DESC
+                LIMIT 1
             ");
             $stmt->execute([$user['id']]);
             $active_session = $stmt->fetch();
             
             if ($active_session) {
                 // EXIT PROCESS
-                try {
-                    $stmt = $pdo->prepare("
-                        UPDATE parking_sessions 
-                        SET exit_at = NOW(), gate_out_id = NULL 
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$active_session['id']]);
-                    
-                    $session_duration = date_diff(
-                        new DateTime($active_session['entrance_at']), 
-                        new DateTime()
-                    )->format('%h hours %i minutes');
-                    
-                    echo json_encode([
-                        'status' => 'success',
-                        'message' => 'Exit successful! Have a safe trip.',
-                        'type' => 'EXIT',
-                        'user_name' => $user['FIRST'] . ' ' . $user['Last'],
-                        'spot_number' => $active_session['spot_number'],
-                        'campus' => $active_session['campus_name'],
-                        'block' => $active_session['block_name'],
-                        'entry_time' => date('M j, Y g:i A', strtotime($active_session['entrance_at'])),
-                        'duration' => $session_duration,
-                        'photo_url' => $user['photo_url']
-                    ]);
-                } catch (Exception $e) {
-                    echo json_encode([
-                        'status' => 'error',
-                        'message' => 'Error processing exit. Please try again.',
-                        'type' => 'DENIED'
-                    ]);
-                }
+                $stmt = $pdo->prepare("
+                    UPDATE parking_sessions 
+                    SET exit_at = NOW(), gate_out_id = ? 
+                    WHERE id = ?
+                ");
+                $stmt->execute([null, $active_session['id']]);
+                
+                // Calculate duration
+                $entry_time = new DateTime($active_session['entrance_at']);
+                $exit_time = new DateTime();
+                $duration = $exit_time->diff($entry_time);
+                $duration_text = $duration->format('%h hours %i minutes');
+                
+                echo json_encode([
+                    'status' => 'success',
+                    'type' => 'EXIT',
+                    'message' => 'Exit successful! Have a safe trip.',
+                    'user_name' => $user['FIRST'] . ' ' . $user['Last'],
+                    'email' => $user['Email'],
+                    'parking_number' => $user['parking_number'],
+                    'spot_number' => $active_session['spot_number'],
+                    'campus' => $active_session['campus_name'],
+                    'block' => $active_session['block_name'],
+                    'entry_gate' => $active_session['entry_gate'],
+                    'exit_gate' => $wall_code['description'],
+                    'entry_time' => date('M j, Y g:i A', strtotime($active_session['entrance_at'])),
+                    'exit_time' => date('M j, Y g:i A'),
+                    'duration' => $duration_text,
+                    'photo_url' => $user['photo_url']
+                ]);
             } else {
-                // ENTRY PROCESS
-                // Find available spot in the scanned campus
+                // ENTRY PROCESS - Find available spot
                 $stmt = $pdo->prepare("
                     SELECT * FROM parking_spots 
-                    WHERE campus_id = ? AND is_occupied = 0 AND is_reserved = 0
-                    ORDER BY spot_number 
+                    WHERE is_occupied = 0 AND is_reserved = 0
+                    ORDER BY id 
                     LIMIT 1
                 ");
-                $stmt->execute([$campus['id']]);
+                $stmt->execute();
                 $available_spot = $stmt->fetch();
                 
                 if (!$available_spot) {
                     echo json_encode([
                         'status' => 'error',
-                        'message' => 'No available parking spots in ' . $campus['name'] . ' campus.',
-                        'type' => 'DENIED'
+                        'message' => 'No available parking spots at this time.'
                     ]);
                     exit;
                 }
                 
-                // Check campus restrictions (if user has assigned campus)
-                if ($user['campus_id'] && $user['campus_id'] != $campus['id']) {
-                    // Different campus - check if cross-campus is allowed
-                    $stmt = $pdo->prepare("SELECT v FROM settings WHERE k = 'allow_cross_campus'");
-                    $stmt->execute();
-                    $setting = $stmt->fetch();
-                    
-                    if (!$setting || $setting['v'] !== '1') {
-                        echo json_encode([
-                            'status' => 'error',
-                            'message' => 'Access denied. You can only park at ' . $user['campus_name'] . ' campus.',
-                            'type' => 'DENIED'
-                        ]);
-                        exit;
-                    }
-                }
+                // Create parking session
+                $stmt = $pdo->prepare("
+                    INSERT INTO parking_sessions (
+                        user_id, spot_id, entrance_at, gate_in_id, 
+                        parking_number, wall_code_id
+                    ) VALUES (?, ?, NOW(), ?, ?, ?)
+                ");
+                $stmt->execute([
+                    $user['id'], 
+                    $available_spot['id'], 
+                    null,
+                    $user['parking_number'],
+                    $wall_code['id']
+                ]);
                 
-                try {
-                    // Create parking session
-                    $stmt = $pdo->prepare("
-                        INSERT INTO parking_sessions (user_id, spot_id, entrance_at, gate_in_id) 
-                        VALUES (?, ?, NOW(), NULL)
-                    ");
-                    $stmt->execute([$user['id'], $available_spot['id']]);
-                    
-                    // Get block info if exists
-                    $block_name = null;
-                    if ($available_spot['block_id']) {
-                        $stmt = $pdo->prepare("SELECT name FROM blocks WHERE id = ?");
-                        $stmt->execute([$available_spot['block_id']]);
-                        $block = $stmt->fetch();
-                        $block_name = $block ? $block['name'] : null;
-                    }
-                    
-                    echo json_encode([
-                        'status' => 'success',
-                        'message' => 'Welcome! Parking assigned successfully.',
-                        'type' => 'ENTRY',
-                        'user_name' => $user['FIRST'] . ' ' . $user['Last'],
-                        'spot_number' => $available_spot['spot_number'],
-                        'campus' => $campus['name'],
-                        'block' => $block_name,
-                        'entry_time' => date('M j, Y g:i A'),
-                        'parking_number' => $user['parking_number'],
-                        'photo_url' => $user['photo_url']
-                    ]);
-                } catch (Exception $e) {
-                    echo json_encode([
-                        'status' => 'error',
-                        'message' => 'Error processing entry. Please try again.',
-                        'type' => 'DENIED'
-                    ]);
-                }
+                // Get spot details
+                $stmt = $pdo->prepare("
+                    SELECT ps.spot_number, c.name as campus_name, b.name as block_name
+                    FROM parking_spots ps
+                    LEFT JOIN campuses c ON ps.campus_id = c.id
+                    LEFT JOIN blocks b ON ps.block_id = b.id
+                    WHERE ps.id = ?
+                ");
+                $stmt->execute([$available_spot['id']]);
+                $spot_details = $stmt->fetch();
+                
+                echo json_encode([
+                    'status' => 'success',
+                    'type' => 'ENTRY',
+                    'message' => 'Welcome! Parking assigned successfully.',
+                    'user_name' => $user['FIRST'] . ' ' . $user['Last'],
+                    'email' => $user['Email'],
+                    'parking_number' => $user['parking_number'],
+                    'spot_number' => $spot_details['spot_number'],
+                    'campus' => $spot_details['campus_name'],
+                    'block' => $spot_details['block_name'],
+                    'entry_gate' => $wall_code['description'],
+                    'entry_time' => date('M j, Y g:i A'),
+                    'photo_url' => $user['photo_url']
+                ]);
             }
+            
         } catch (Exception $e) {
             echo json_encode([
                 'status' => 'error',
-                'message' => 'System error. Please contact support.',
-                'type' => 'DENIED'
+                'message' => 'System error: ' . $e->getMessage()
             ]);
         }
         exit;
     }
+    
+    if ($_POST['action'] === 'reset_scanner') {
+        unset($_SESSION['selected_wall_code']);
+        echo json_encode(['status' => 'success']);
+        exit;
+    }
 }
 
-$pageTitle = "QR Scanner - LIU Parking System";
+$pageTitle = "Parking Scanner - LIU System";
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($pageTitle); ?></title>
-    <meta name="description" content="QR Code Scanner for LIU Parking System">
-
-    <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -228,66 +220,42 @@ $pageTitle = "QR Scanner - LIU Parking System";
 
     <style>
         :root {
-            --primary-color: #2563eb;
-            --success-color: #10b981;
-            --danger-color: #ef4444;
-            --warning-color: #f59e0b;
-            --dark-color: #1e293b;
-            --light-color: #f8fafc;
-            --border-color: #e2e8f0;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+            --primary: #003366;
+            --secondary: #FFB81C;
+            --success: #10b981;
+            --danger: #ef4444;
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, var(--primary) 0%, #004080 100%);
             min-height: 100vh;
-            color: var(--dark-color);
-            overflow-x: hidden;
+            color: white;
         }
 
         .scanner-container {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
         }
 
         .scanner-card {
-            background: white;
+            background: rgba(255, 255, 255, 0.95);
             border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            width: 100%;
-            max-width: 500px;
             overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
         }
 
         .scanner-header {
-            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            background: linear-gradient(135deg, var(--primary), #3b82f6);
             color: white;
             padding: 2rem;
             text-align: center;
         }
 
-        .scanner-header h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .scanner-header p {
-            opacity: 0.9;
-            margin: 0;
-        }
-
         .scanner-body {
             padding: 2rem;
+            color: #333;
         }
 
         .camera-container {
@@ -297,7 +265,7 @@ $pageTitle = "QR Scanner - LIU Parking System";
             background: #000;
             border-radius: 15px;
             overflow: hidden;
-            margin-bottom: 2rem;
+            margin-bottom: 1rem;
         }
 
         #camera-feed {
@@ -313,118 +281,63 @@ $pageTitle = "QR Scanner - LIU Parking System";
             transform: translate(-50%, -50%);
             width: 200px;
             height: 200px;
-            border: 3px solid var(--success-color);
+            border: 3px solid var(--success);
             border-radius: 15px;
             background: rgba(16, 185, 129, 0.1);
         }
 
-        .scanner-corners {
-            position: absolute;
-            width: 30px;
-            height: 30px;
-            border: 4px solid var(--success-color);
-        }
-
-        .corner-tl {
-            top: -2px;
-            left: -2px;
-            border-right: none;
-            border-bottom: none;
-        }
-
-        .corner-tr {
-            top: -2px;
-            right: -2px;
-            border-left: none;
-            border-bottom: none;
-        }
-
-        .corner-bl {
-            bottom: -2px;
-            left: -2px;
-            border-right: none;
-            border-top: none;
-        }
-
-        .corner-br {
-            bottom: -2px;
-            right: -2px;
-            border-left: none;
-            border-top: none;
-        }
-
-        .email-input-section {
+        .step-indicator {
+            display: flex;
+            justify-content: center;
             margin-bottom: 2rem;
         }
 
-        .email-input {
+        .step {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            margin: 0 0.5rem;
+            border-radius: 25px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .step.active {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .step.completed {
+            background: var(--success);
+            color: white;
+        }
+
+        .step.inactive {
+            background: #e5e7eb;
+            color: #6b7280;
+        }
+
+        .scan-btn {
             width: 100%;
             padding: 1rem;
-            border: 2px solid var(--border-color);
-            border-radius: 10px;
-            font-size: 1rem;
-            transition: border-color 0.3s ease;
-        }
-
-        .email-input:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-
-        .scan-button {
-            width: 100%;
-            background: linear-gradient(135deg, var(--success-color), #059669);
-            color: white;
-            border: none;
-            padding: 1rem 2rem;
-            border-radius: 10px;
             font-size: 1.1rem;
             font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
+            border: none;
+            border-radius: 10px;
             margin-bottom: 1rem;
+            transition: all 0.3s;
         }
 
-        .scan-button:hover:not(:disabled) {
+        .btn-primary {
+            background: linear-gradient(135deg, var(--success), #059669);
+        }
+
+        .btn-primary:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
         }
 
-        .scan-button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .manual-input-toggle {
-            width: 100%;
-            background: transparent;
-            color: var(--primary-color);
-            border: 2px solid var(--primary-color);
-            padding: 0.75rem;
-            border-radius: 10px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .manual-input-toggle:hover {
-            background: var(--primary-color);
-            color: white;
-        }
-
-        .manual-input-section {
-            display: none;
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .manual-input-section.show {
-            display: block;
-        }
-
-        .status-display {
+        .result-display {
             margin-top: 2rem;
             padding: 1.5rem;
             border-radius: 15px;
@@ -432,28 +345,22 @@ $pageTitle = "QR Scanner - LIU Parking System";
             display: none;
         }
 
-        .status-display.success {
+        .result-display.success {
             background: linear-gradient(135deg, #d1fae5, #a7f3d0);
-            border: 2px solid var(--success-color);
+            border: 2px solid var(--success);
             color: #065f46;
         }
 
-        .status-display.error {
+        .result-display.error {
             background: linear-gradient(135deg, #fee2e2, #fecaca);
-            border: 2px solid var(--danger-color);
+            border: 2px solid var(--danger);
             color: #991b1b;
-        }
-
-        .status-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
         }
 
         .user-info {
             display: grid;
             grid-template-columns: auto 1fr;
             gap: 1rem;
-            align-items: center;
             margin-top: 1rem;
             padding: 1rem;
             background: rgba(255, 255, 255, 0.8);
@@ -466,18 +373,6 @@ $pageTitle = "QR Scanner - LIU Parking System";
             border-radius: 50%;
             object-fit: cover;
             border: 3px solid white;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .user-details h4 {
-            margin: 0 0 0.5rem 0;
-            color: var(--dark-color);
-        }
-
-        .user-details p {
-            margin: 0.25rem 0;
-            font-size: 0.9rem;
-            color: #6b7280;
         }
 
         .loading-overlay {
@@ -493,7 +388,7 @@ $pageTitle = "QR Scanner - LIU Parking System";
             z-index: 1000;
         }
 
-        .loading-spinner {
+        .spinner {
             width: 60px;
             height: 60px;
             border: 6px solid rgba(255, 255, 255, 0.3);
@@ -509,146 +404,103 @@ $pageTitle = "QR Scanner - LIU Parking System";
 
         .home-link {
             position: fixed;
-            top: 2rem;
-            left: 2rem;
+            top: 1rem;
+            left: 1rem;
             background: rgba(255, 255, 255, 0.9);
-            color: var(--primary-color);
-            padding: 0.75rem 1rem;
-            border-radius: 50px;
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 25px;
             text-decoration: none;
             font-weight: 500;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
             z-index: 100;
-        }
-
-        .home-link:hover {
-            background: white;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-            color: var(--primary-color);
-            text-decoration: none;
         }
 
         @media (max-width: 768px) {
             .scanner-container {
-                padding: 0.5rem;
+                padding: 1rem;
             }
-
-            .scanner-card {
-                max-width: 100%;
-            }
-
-            .scanner-header {
-                padding: 1.5rem;
-            }
-
-            .scanner-body {
-                padding: 1.5rem;
-            }
-
             .camera-container {
                 height: 250px;
             }
-
             .scanner-overlay {
                 width: 150px;
                 height: 150px;
-            }
-
-            .home-link {
-                top: 1rem;
-                left: 1rem;
-                padding: 0.5rem 0.75rem;
-                font-size: 0.9rem;
             }
         }
     </style>
 </head>
 
 <body>
-    <!-- Home Link -->
-    <a href="index.php" class="home-link">
-        <i class="fas fa-home me-2"></i>Home
+    <a href="admin/" class="home-link">
+        <i class="fas fa-home me-2"></i>Admin
     </a>
 
-    <!-- Loading Overlay -->
     <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner"></div>
+        <div class="spinner"></div>
     </div>
 
-    <!-- Main Scanner Container -->
     <div class="scanner-container">
         <div class="scanner-card">
             <div class="scanner-header">
-                <h1><i class="fas fa-qrcode me-2"></i>QR Scanner</h1>
-                <p>Scan wall QR code or enter your email to access parking</p>
+                <h1><i class="fas fa-qrcode me-2"></i>Parking Scanner</h1>
+                <p>Two-step scanning process for entry/exit</p>
             </div>
 
             <div class="scanner-body">
-                <!-- Email Input Section -->
-                <div class="email-input-section">
-                    <label for="userEmail" class="form-label">
-                        <i class="fas fa-envelope me-2"></i>Your LIU Email Address
-                    </label>
-                    <input 
-                        type="email" 
-                        id="userEmail" 
-                        class="email-input" 
-                        placeholder="Enter your LIU email address"
-                        required
-                    >
+                <!-- Step Indicator -->
+                <div class="step-indicator">
+                    <div class="step active" id="step1">
+                        <i class="fas fa-door-open me-2"></i>1. Wall Code
+                    </div>
+                    <div class="step inactive" id="step2">
+                        <i class="fas fa-barcode me-2"></i>2. User Barcode
+                    </div>
+                </div>
+
+                <!-- Current Wall Code Display -->
+                <div id="wallCodeDisplay" style="display: none;" class="alert alert-info text-center mb-3">
+                    <strong>Current Location:</strong> <span id="currentWallCode"></span>
+                    <button class="btn btn-sm btn-outline-secondary ms-2" onclick="resetScanner()">
+                        <i class="fas fa-refresh me-1"></i>Change
+                    </button>
+                </div>
+
+                <!-- Instructions -->
+                <div class="alert alert-warning" id="instructions">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <span id="instructionText">First, scan the <strong>Wall QR Code</strong> to select location</span>
                 </div>
 
                 <!-- Camera Container -->
                 <div class="camera-container">
                     <video id="camera-feed" autoplay playsinline muted></video>
-                    <div class="scanner-overlay">
-                        <div class="scanner-corners corner-tl"></div>
-                        <div class="scanner-corners corner-tr"></div>
-                        <div class="scanner-corners corner-bl"></div>
-                        <div class="scanner-corners corner-br"></div>
-                    </div>
+                    <div class="scanner-overlay"></div>
                 </div>
 
                 <!-- Scan Button -->
-                <button class="scan-button" id="startScanBtn" onclick="startScanning()">
+                <button class="scan-btn btn btn-primary" id="scanBtn" onclick="startCamera()">
                     <i class="fas fa-camera me-2"></i>Start Camera
                 </button>
 
-                <!-- Manual Input Toggle -->
-                <button class="manual-input-toggle" onclick="toggleManualInput()">
-                    <i class="fas fa-keyboard me-2"></i>Enter Code Manually
-                </button>
-
-                <!-- Manual Input Section -->
-                <div class="manual-input-section" id="manualInputSection">
-                    <label for="manualCode" class="form-label">Wall Code</label>
-                    <input 
-                        type="text" 
-                        id="manualCode" 
-                        class="form-control mb-2" 
-                        placeholder="e.g., BEI0000001"
-                        style="text-transform: uppercase;"
-                    >
-                    <button class="btn btn-primary w-100" onclick="processManualCode()">
-                        <i class="fas fa-check me-2"></i>Process Code
-                    </button>
-                </div>
-
-                <!-- Status Display -->
-                <div class="status-display" id="statusDisplay">
-                    <div class="status-icon" id="statusIcon"></div>
-                    <h3 id="statusTitle"></h3>
-                    <p id="statusMessage"></p>
+                <!-- Result Display -->
+                <div class="result-display" id="resultDisplay">
+                    <div class="result-icon" id="resultIcon" style="font-size: 3rem; margin-bottom: 1rem;"></div>
+                    <h3 id="resultTitle"></h3>
+                    <p id="resultMessage"></p>
                     <div class="user-info" id="userInfo" style="display: none;">
-                        <img id="userPhoto" class="user-photo" src="" alt="User Photo" onerror="this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><circle cx=\'50\' cy=\'50\' r=\'50\' fill=\'%23e5e7eb\'/><text x=\'50\' y=\'55\' text-anchor=\'middle\' font-size=\'35\' fill=\'%236b7280\'>👤</text></svg>'">
+                        <img id="userPhoto" class="user-photo" src="" alt="User Photo" 
+                             onerror="this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><circle cx=\'50\' cy=\'50\' r=\'50\' fill=\'%23e5e7eb\'/><text x=\'50\' y=\'55\' text-anchor=\'middle\' font-size=\'35\' fill=\'%236b7280\'>👤</text></svg>'">
                         <div class="user-details">
                             <h4 id="userName"></h4>
+                            <p><strong>Email:</strong> <span id="userEmail"></span></p>
+                            <p><strong>Parking Number:</strong> <span id="parkingNumber"></span></p>
                             <p><strong>Spot:</strong> <span id="spotInfo"></span></p>
                             <p><strong>Campus:</strong> <span id="campusInfo"></span></p>
                             <p><strong>Time:</strong> <span id="timeInfo"></span></p>
-                            <p id="durationInfo" style="display: none;"><strong>Duration:</strong> <span id="duration"></span></p>
+                            <div id="durationInfo" style="display: none;">
+                                <p><strong>Duration:</strong> <span id="duration"></span></p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -661,32 +513,17 @@ $pageTitle = "QR Scanner - LIU Parking System";
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
     <script>
-        let video = null;
-        let canvas = null;
-        let context = null;
-        let scanning = false;
-        let stream = null;
+        let video, canvas, context, scanning = false, stream = null;
+        let currentStep = 'wall_code'; // 'wall_code' or 'user_barcode'
+        let wallCodeSelected = false;
 
-        // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             canvas = document.createElement('canvas');
             context = canvas.getContext('2d');
         });
 
-        // Start camera scanning
-        async function startScanning() {
-            const email = document.getElementById('userEmail').value.trim();
-            if (!email) {
-                alert('Please enter your email address first');
-                return;
-            }
-
-            if (!email.includes('@')) {
-                alert('Please enter a valid email address');
-                return;
-            }
-
-            const btn = document.getElementById('startScanBtn');
+        async function startCamera() {
+            const btn = document.getElementById('scanBtn');
             
             try {
                 btn.disabled = true;
@@ -694,7 +531,6 @@ $pageTitle = "QR Scanner - LIU Parking System";
 
                 video = document.getElementById('camera-feed');
                 
-                // Request camera access
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { 
                         facingMode: 'environment',
@@ -708,39 +544,34 @@ $pageTitle = "QR Scanner - LIU Parking System";
 
                 scanning = true;
                 btn.innerHTML = '<i class="fas fa-stop me-2"></i>Stop Scanning';
-                btn.onclick = stopScanning;
+                btn.onclick = stopCamera;
                 btn.disabled = false;
 
-                // Start scanning loop
-                requestAnimationFrame(scanQRCode);
+                requestAnimationFrame(scanLoop);
 
             } catch (error) {
-                console.error('Camera access error:', error);
-                alert('Unable to access camera. Please check permissions and try again.');
+                console.error('Camera error:', error);
+                alert('Camera access denied. Please check permissions.');
                 btn.innerHTML = '<i class="fas fa-camera me-2"></i>Start Camera';
                 btn.disabled = false;
             }
         }
 
-        // Stop camera scanning
-        function stopScanning() {
+        function stopCamera() {
             scanning = false;
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
                 stream = null;
             }
             
-            const btn = document.getElementById('startScanBtn');
+            const btn = document.getElementById('scanBtn');
             btn.innerHTML = '<i class="fas fa-camera me-2"></i>Start Camera';
-            btn.onclick = startScanning;
+            btn.onclick = startCamera;
         }
 
-        // QR Code scanning loop
-        function scanQRCode() {
+        function scanLoop() {
             if (!scanning || !video || video.readyState !== video.HAVE_ENOUGH_DATA) {
-                if (scanning) {
-                    requestAnimationFrame(scanQRCode);
-                }
+                if (scanning) requestAnimationFrame(scanLoop);
                 return;
             }
 
@@ -752,156 +583,166 @@ $pageTitle = "QR Scanner - LIU Parking System";
             const code = jsQR(imageData.data, imageData.width, imageData.height);
 
             if (code) {
-                console.log('QR Code detected:', code.data);
-                processQRCode(code.data);
+                processScannedCode(code.data);
                 return;
             }
 
-            requestAnimationFrame(scanQRCode);
+            requestAnimationFrame(scanLoop);
         }
 
-        // Process scanned QR code
-        function processQRCode(scannedCode) {
-            const email = document.getElementById('userEmail').value.trim();
-            
-            if (!email) {
-                alert('Please enter your email address');
-                return;
-            }
-
-            stopScanning();
+        function processScannedCode(scannedData) {
+            stopCamera();
             showLoading(true);
 
-            // Send to server for processing
-            fetch('scan.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    action: 'process_qr',
-                    scanned_code: scannedCode,
-                    user_email: email
+            if (currentStep === 'wall_code') {
+                // Process wall code
+                fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        action: 'scan_wall_code',
+                        wall_code: scannedData
+                    })
                 })
-            })
-            .then(response => response.json())
-            .then(data => {
-                showLoading(false);
-                displayResult(data);
-            })
-            .catch(error => {
-                showLoading(false);
-                console.error('Error:', error);
-                displayResult({
-                    status: 'error',
-                    message: 'Network error. Please try again.',
-                    type: 'DENIED'
+                .then(response => response.json())
+                .then(data => {
+                    showLoading(false);
+                    if (data.status === 'success') {
+                        wallCodeSelected = true;
+                        currentStep = 'user_barcode';
+                        updateUI();
+                        document.getElementById('currentWallCode').textContent = data.wall_description;
+                        document.getElementById('wallCodeDisplay').style.display = 'block';
+                    } else {
+                        showError(data.message);
+                    }
+                })
+                .catch(error => {
+                    showLoading(false);
+                    showError('Network error. Please try again.');
                 });
+
+            } else if (currentStep === 'user_barcode') {
+                // Process user barcode
+                fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        action: 'scan_user_barcode',
+                        user_barcode: scannedData
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    showLoading(false);
+                    displayResult(data);
+                })
+                .catch(error => {
+                    showLoading(false);
+                    showError('Network error. Please try again.');
+                });
+            }
+        }
+
+        function updateUI() {
+            const step1 = document.getElementById('step1');
+            const step2 = document.getElementById('step2');
+            const instructions = document.getElementById('instructionText');
+
+            if (currentStep === 'wall_code') {
+                step1.className = 'step active';
+                step2.className = 'step inactive';
+                instructions.innerHTML = 'First, scan the <strong>Wall QR Code</strong> to select location';
+            } else {
+                step1.className = 'step completed';
+                step2.className = 'step active';
+                instructions.innerHTML = 'Now scan your <strong>User Barcode</strong> (parking number)';
+            }
+        }
+
+        function resetScanner() {
+            fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ action: 'reset_scanner' })
             });
-        }
-
-        // Process manual code entry
-        function processManualCode() {
-            const code = document.getElementById('manualCode').value.trim().toUpperCase();
-            const email = document.getElementById('userEmail').value.trim();
             
-            if (!code) {
-                alert('Please enter a wall code');
-                return;
-            }
-
-            if (!email) {
-                alert('Please enter your email address');
-                return;
-            }
-
-            processQRCode(code);
+            wallCodeSelected = false;
+            currentStep = 'wall_code';
+            updateUI();
+            document.getElementById('wallCodeDisplay').style.display = 'none';
+            document.getElementById('resultDisplay').style.display = 'none';
         }
 
-        // Toggle manual input section
-        function toggleManualInput() {
-            const section = document.getElementById('manualInputSection');
-            section.classList.toggle('show');
-        }
-
-        // Show/hide loading overlay
-        function showLoading(show) {
-            const overlay = document.getElementById('loadingOverlay');
-            overlay.style.display = show ? 'flex' : 'none';
-        }
-
-        // Display scan result
         function displayResult(data) {
-            const statusDisplay = document.getElementById('statusDisplay');
-            const statusIcon = document.getElementById('statusIcon');
-            const statusTitle = document.getElementById('statusTitle');
-            const statusMessage = document.getElementById('statusMessage');
+            const resultDisplay = document.getElementById('resultDisplay');
+            const resultIcon = document.getElementById('resultIcon');
+            const resultTitle = document.getElementById('resultTitle');
+            const resultMessage = document.getElementById('resultMessage');
             const userInfo = document.getElementById('userInfo');
 
-            // Reset display
-            statusDisplay.className = 'status-display';
+            resultDisplay.className = 'result-display';
             userInfo.style.display = 'none';
 
             if (data.status === 'success') {
-                statusDisplay.classList.add('success');
+                resultDisplay.classList.add('success');
                 
                 if (data.type === 'ENTRY') {
-                    statusIcon.innerHTML = '<i class="fas fa-times-circle"></i>';
-                statusIcon.style.color = '#ef4444';
-                statusTitle.textContent = 'Access Denied';
-                statusMessage.textContent = data.message;
-            }
-
-            statusDisplay.style.display = 'block';
-
-            // Auto-hide after 10 seconds for success, 15 seconds for error
-            setTimeout(() => {
-                statusDisplay.style.display = 'none';
-                document.getElementById('durationInfo').style.display = 'none';
-            }, data.status === 'success' ? 10000 : 15000);
-        }
-
-        // Format manual input to uppercase
-        document.getElementById('manualCode').addEventListener('input', function(e) {
-            e.target.value = e.target.value.toUpperCase();
-        });
-
-        // Enter key handlers
-        document.getElementById('userEmail').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                startScanning();
-            }
-        });
-
-        document.getElementById('manualCode').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                processManualCode();
-            }
-        });
-
-        // Auto-focus email input
-        document.getElementById('userEmail').focus();
-
-        // Check for camera support
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            document.getElementById('startScanBtn').style.display = 'none';
-            const manualToggle = document.querySelector('.manual-input-toggle');
-            manualToggle.textContent = 'Camera not supported - Use manual entry';
-            manualToggle.click();
-        }
-
-        // Add camera permission request on page load
-        window.addEventListener('load', function() {
-            // Check if camera permission is already granted
-            navigator.permissions.query({name: 'camera'}).then(function(result) {
-                if (result.state === 'denied') {
-                    console.log('Camera permission denied');
-                    document.querySelector('.manual-input-toggle').click();
+                    resultIcon.innerHTML = '<i class="fas fa-check-circle" style="color: #10b981;"></i>';
+                    resultTitle.textContent = 'Entry Successful';
+                } else {
+                    resultIcon.innerHTML = '<i class="fas fa-sign-out-alt" style="color: #10b981;"></i>';
+                    resultTitle.textContent = 'Exit Successful';
+                    document.getElementById('durationInfo').style.display = 'block';
+                    document.getElementById('duration').textContent = data.duration || '';
                 }
-            }).catch(function(error) {
-                console.log('Permission query not supported');
+
+                resultMessage.innerHTML = data.message;
+                
+                // Show user info
+                userInfo.style.display = 'grid';
+                document.getElementById('userName').textContent = data.user_name || '';
+                document.getElementById('userEmail').textContent = data.email || '';
+                document.getElementById('parkingNumber').textContent = data.parking_number || '';
+                document.getElementById('spotInfo').textContent = data.spot_number || '';
+                document.getElementById('campusInfo').textContent = data.campus || '';
+                document.getElementById('timeInfo').textContent = data.entry_time || data.exit_time || '';
+                
+                if (data.photo_url) {
+                    document.getElementById('userPhoto').src = data.photo_url;
+                }
+                
+            } else {
+                resultDisplay.classList.add('error');
+                resultIcon.innerHTML = '<i class="fas fa-times-circle" style="color: #ef4444;"></i>';
+                resultTitle.textContent = 'Access Denied';
+                resultMessage.textContent = data.message;
+            }
+
+            resultDisplay.style.display = 'block';
+
+            // Auto-hide and reset after delay
+            setTimeout(() => {
+                resultDisplay.style.display = 'none';
+                if (data.status === 'success') {
+                    resetScanner();
+                }
+            }, data.status === 'success' ? 8000 : 5000);
+        }
+
+        function showError(message) {
+            displayResult({
+                status: 'error',
+                message: message
             });
-        });
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+        }
+
+        // Initialize UI
+        updateUI();
 
         // Cleanup on page unload
         window.addEventListener('beforeunload', function() {
@@ -909,147 +750,6 @@ $pageTitle = "QR Scanner - LIU Parking System";
                 stream.getTracks().forEach(track => track.stop());
             }
         });
-
-        // Vibration feedback for mobile devices
-        function vibrateDevice(pattern = [200]) {
-            if ('vibrate' in navigator) {
-                navigator.vibrate(pattern);
-            }
-        }
-
-        // Enhanced QR processing with vibration
-        function processQRCodeWithFeedback(scannedCode) {
-            vibrateDevice([100, 50, 100]); // Double vibration for scan detection
-            processQRCode(scannedCode);
-        }
-
-        // Update the scan loop to use vibration
-        function scanQRCodeEnhanced() {
-            if (!scanning || !video || video.readyState !== video.HAVE_ENOUGH_DATA) {
-                if (scanning) {
-                    requestAnimationFrame(scanQRCodeEnhanced);
-                }
-                return;
-            }
-
-            canvas.height = video.videoHeight;
-            canvas.width = video.videoWidth;
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-            if (code) {
-                console.log('QR Code detected:', code.data);
-                processQRCodeWithFeedback(code.data);
-                return;
-            }
-
-            requestAnimationFrame(scanQRCodeEnhanced);
-        }
-
-        // Replace the original scan function
-        function scanQRCode() {
-            scanQRCodeEnhanced();
-        }
-
-        // Add torch/flashlight support for mobile devices
-        let torchEnabled = false;
-        
-        function toggleTorch() {
-            if (stream && stream.getVideoTracks().length > 0) {
-                const track = stream.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                
-                if (capabilities.torch) {
-                    torchEnabled = !torchEnabled;
-                    track.applyConstraints({
-                        advanced: [{ torch: torchEnabled }]
-                    }).then(() => {
-                        console.log('Torch toggled:', torchEnabled);
-                    }).catch(err => {
-                        console.error('Torch toggle failed:', err);
-                    });
-                }
-            }
-        }
-
-        // Add torch button if supported
-        function addTorchButton() {
-            const scannerBody = document.querySelector('.scanner-body');
-            const torchBtn = document.createElement('button');
-            torchBtn.className = 'btn btn-outline-primary w-100 mt-2';
-            torchBtn.innerHTML = '<i class="fas fa-flashlight me-2"></i>Toggle Flashlight';
-            torchBtn.onclick = toggleTorch;
-            torchBtn.id = 'torchBtn';
-            torchBtn.style.display = 'none';
-            
-            scannerBody.appendChild(torchBtn);
-        }
-
-        // Initialize torch button
-        addTorchButton();
-
-        // Show torch button when camera starts
-        const originalStartScanning = startScanning;
-        startScanning = async function() {
-            await originalStartScanning();
-            
-            // Check if torch is supported
-            if (stream && stream.getVideoTracks().length > 0) {
-                const track = stream.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                
-                if (capabilities.torch) {
-                    document.getElementById('torchBtn').style.display = 'block';
-                }
-            }
-        };
-
-        // Add sound effects (optional)
-        function playSound(type) {
-            // Create audio context for sound effects
-            try {
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioContext.createOscillator();
-                const gainNode = audioContext.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                
-                if (type === 'success') {
-                    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-                    oscillator.frequency.setValueAtTime(1000, audioContext.currentTime + 0.1);
-                } else if (type === 'error') {
-                    oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
-                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime + 0.1);
-                }
-                
-                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-                gainNode.gain.setValueAtTime(0, audioContext.currentTime + 0.2);
-                
-                oscillator.start(audioContext.currentTime);
-                oscillator.stop(audioContext.currentTime + 0.2);
-            } catch (error) {
-                // Sound not supported or blocked
-                console.log('Sound effects not available');
-            }
-        }
-
-        // Enhanced result display with sound
-        const originalDisplayResult = displayResult;
-        displayResult = function(data) {
-            originalDisplayResult(data);
-            
-            // Play sound based on result
-            if (data.status === 'success') {
-                playSound('success');
-                vibrateDevice([200, 100, 200]);
-            } else {
-                playSound('error');
-                vibrateDevice([500]);
-            }
-        };
     </script>
 </body>
 </html>
