@@ -536,9 +536,7 @@ if (!isset($db_connected)) {
           <li><a href="index.php#about">About</a></li>
           <li><a href="index.php#services">Features</a></li>
           <?php if (isLoggedIn()): ?>
-            <li><a href="dashboard.php">Dashboard</a></li>
             <?php if (getUserRole() === 'admin'): ?>
-              <li><a href="admin.php">Admin</a></li>
             <?php endif; ?>
           <?php endif; ?>
         </ul>
