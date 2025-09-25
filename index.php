@@ -87,7 +87,7 @@ include 'includes/header.php';
           <a href="scan.php" class="btn-get-started">Scan QR Code</a>
           <a href="login.php" class="btn-get-started">Staff Login</a>
         <?php else: ?>
-          <a href="dashboard.php" class="btn-get-started">Dashboard</a>
+          <a href="login.php" class="btn-get-started">Login</a>
           <a href="scan.php" class="btn-get-started">Scan QR Code</a>
         <?php endif; ?>
       </div>
