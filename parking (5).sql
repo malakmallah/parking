@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1:3306
--- Generation Time: Sep 25, 2025 at 04:27 AM
+-- Generation Time: Sep 25, 2025 at 06:39 AM
 -- Server version: 11.5.2-MariaDB
 -- PHP Version: 8.2.26
 
@@ -79,21 +79,21 @@ CREATE TABLE IF NOT EXISTS `barcode_boxes` (
 --
 
 INSERT INTO `barcode_boxes` (`id`, `campus_id`, `block_id`, `code`) VALUES
-(1, 5, NULL, 'AKK-BOX'),
-(2, 8, NULL, 'BEK-BOX'),
-(3, 7, NULL, 'MLN-BOX'),
-(4, 6, NULL, 'NAB-BOX'),
-(5, 9, NULL, 'RAY-BOX'),
-(6, 3, NULL, 'SAI-BOX'),
-(7, 2, NULL, 'TRP-BOX'),
-(8, 4, NULL, 'TYR-BOX'),
-(9, 1, 1, 'BEI-BlockA-BOX'),
-(10, 1, 2, 'BEI-BlockB-BOX'),
-(11, 1, 3, 'BEI-BlockC-BOX'),
-(12, 1, 4, 'BEI-BlockD-BOX'),
-(13, 1, 5, 'BEI-BlockE-BOX'),
-(14, 1, 6, 'BEI-BlockF-BOX'),
-(15, 1, 7, 'BEI-BlockG-BOX');
+(1, 5, NULL, 'AKK BARCODE'),
+(2, 8, NULL, 'BEK BARCODE'),
+(3, 7, NULL, 'MLN BARCODE'),
+(4, 6, NULL, 'NAB BARCODE'),
+(5, 9, NULL, 'RAY BARCODE'),
+(6, 3, NULL, 'SAI BARCODE'),
+(7, 2, NULL, 'TRP BARCODE'),
+(8, 4, NULL, 'TYR BARCODE'),
+(9, 1, 1, 'BEI-BlockA BARCODE'),
+(10, 1, 2, 'BEI-BlockB BARCODE'),
+(11, 1, 3, 'BEI-BlockC BARCODE'),
+(12, 1, 4, 'BEI-BlockD BARCODE'),
+(13, 1, 5, 'BEI-BlockE BARCODE'),
+(14, 1, 6, 'BEI-BlockF BARCODE'),
+(15, 1, 7, 'BEI-BlockG BARCODE');
 
 -- --------------------------------------------------------
 
@@ -256,7 +256,7 @@ CREATE TABLE IF NOT EXISTS `parking_sessions` (
   KEY `ps_user_id_idx` (`user_id`),
   KEY `ps_spot_id_idx` (`spot_id`),
   KEY `ps_wall_code_id_idx` (`wall_code_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=31 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=34 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `parking_sessions`
@@ -292,7 +292,10 @@ INSERT INTO `parking_sessions` (`id`, `user_id`, `spot_id`, `wall_code_id`, `ent
 (27, 47, 361, 24, '2025-09-23 07:45:00', '2025-09-23 16:30:00', 6, 6, 'BEI-000047', 'completed', '2025-09-24 10:18:31', '2025-09-24 10:18:31', NULL),
 (28, 48, 267, 22, '2025-09-23 08:15:00', '2025-09-23 17:15:00', 4, 4, 'BEI-000048', 'completed', '2025-09-24 10:18:31', '2025-09-24 10:18:31', NULL),
 (29, 49, 1165, 16, '2025-09-23 22:00:00', '2025-09-24 06:00:00', 2, 2, 'TYR-000049', 'completed', '2025-09-24 10:18:31', '2025-09-24 10:18:31', NULL),
-(30, 50, 1166, 16, '2025-09-22 23:30:00', '2025-09-23 07:30:00', 2, 2, 'BEI-000050', 'completed', '2025-09-24 10:18:31', '2025-09-24 10:18:31', NULL);
+(30, 50, 1166, 16, '2025-09-22 23:30:00', '2025-09-23 07:30:00', 2, 2, 'BEI-000050', 'completed', '2025-09-24 10:18:31', '2025-09-24 10:18:31', NULL),
+(31, 1024, 6, 31, '2025-09-25 08:38:38', NULL, NULL, NULL, 'BEI-001024', 'active', '2025-09-25 05:38:38', '2025-09-25 05:38:38', NULL),
+(32, 1281, 7, 31, '2025-09-25 08:42:33', NULL, NULL, NULL, 'SAI-001281', 'active', '2025-09-25 05:42:33', '2025-09-25 05:42:33', NULL),
+(33, 1311, 8, 24, '2025-09-25 08:56:40', NULL, NULL, NULL, 'RAY-001311', 'active', '2025-09-25 05:56:40', '2025-09-25 05:56:40', NULL);
 
 --
 -- Triggers `parking_sessions`
@@ -415,9 +418,9 @@ INSERT INTO `parking_spots` (`id`, `campus_id`, `block_id`, `spot_number`, `is_r
 (3, 2, NULL, 'TRP-003', 0, 1),
 (4, 2, NULL, 'TRP-004', 0, 1),
 (5, 2, NULL, 'TRP-005', 0, 1),
-(6, 2, NULL, 'TRP-006', 0, 0),
-(7, 2, NULL, 'TRP-007', 0, 0),
-(8, 2, NULL, 'TRP-008', 0, 0),
+(6, 2, NULL, 'TRP-006', 0, 1),
+(7, 2, NULL, 'TRP-007', 0, 1),
+(8, 2, NULL, 'TRP-008', 0, 1),
 (9, 2, NULL, 'TRP-009', 0, 0),
 (10, 2, NULL, 'TRP-010', 0, 0),
 (11, 2, NULL, 'TRP-011', 0, 0),
@@ -3127,22 +3130,22 @@ CREATE TABLE IF NOT EXISTS `wall_codes` (
 --
 
 INSERT INTO `wall_codes` (`id`, `code`, `description`) VALUES
-(16, 'CAMPUS:1', 'Campus Beirut (BEI) - Entry/Exit Gate'),
-(17, 'CAMPUS:2', 'Campus Tripoli (TRP) - Entry/Exit Gate'),
-(18, 'CAMPUS:3', 'Campus Saida (SAI) - Entry/Exit Gate'),
-(19, 'CAMPUS:4', 'Campus Tyre (TYR) - Entry/Exit Gate'),
-(20, 'CAMPUS:5', 'Campus Akkar (AKK) - Entry/Exit Gate'),
-(21, 'CAMPUS:6', 'Campus Nabatieh (NAB) - Entry/Exit Gate'),
-(22, 'CAMPUS:7', 'Campus Mount Lebanon (MLN) - Entry/Exit Gate'),
-(23, 'CAMPUS:8', 'Campus Bekaa (BEK) - Entry/Exit Gate'),
-(24, 'CAMPUS:9', 'Campus Rayak (RAY) - Entry/Exit Gate'),
-(25, 'CAMPUS:1|BLOCK:1', 'Beirut Block A - Entry/Exit Gate'),
-(26, 'CAMPUS:1|BLOCK:2', 'Beirut Block B - Entry/Exit Gate'),
-(27, 'CAMPUS:1|BLOCK:3', 'Beirut Block C - Entry/Exit Gate'),
-(28, 'CAMPUS:1|BLOCK:4', 'Beirut Block D - Entry/Exit Gate'),
-(29, 'CAMPUS:1|BLOCK:5', 'Beirut Block E - Entry/Exit Gate'),
-(30, 'CAMPUS:1|BLOCK:6', 'Beirut Block F - Entry/Exit Gate'),
-(31, 'CAMPUS:1|BLOCK:7', 'Beirut Block G - Entry/Exit Gate');
+(16, 'Beirut-B', 'Campus Beirut (BEI) - Entry/Exit Gate'),
+(17, 'Tripoli-T', 'Campus Tripoli (TRP) - Entry/Exit Gate'),
+(18, 'Saida-S', 'Campus Saida (SAI) - Entry/Exit Gate'),
+(19, 'Tyre-T', 'Campus Tyre (TYR) - Entry/Exit Gate'),
+(20, 'Akkar-A', 'Campus Akkar (AKK) - Entry/Exit Gate'),
+(21, 'Nabatieh-N', 'Campus Nabatieh (NAB) - Entry/Exit Gate'),
+(22, 'Mount Lebnanon-MNT', 'Campus Mount Lebanon (MLN) - Entry/Exit Gate'),
+(23, 'Bekaa-B', 'Campus Bekaa (BEK) - Entry/Exit Gate'),
+(24, 'Rayyak-R', 'Campus Rayak (RAY) - Entry/Exit Gate'),
+(25, 'Beirut Block A', 'Beirut Block A - Entry/Exit Gate'),
+(26, 'Beirut Block B', 'Beirut Block B - Entry/Exit Gate'),
+(27, 'Beirut Block C', 'Beirut Block C - Entry/Exit Gate'),
+(28, 'Beirut Block D', 'Beirut Block D - Entry/Exit Gate'),
+(29, 'Beirut Block E', 'Beirut Block E - Entry/Exit Gate'),
+(30, 'Beirut Block F', 'Beirut Block F - Entry/Exit Gate'),
+(31, 'Beirut Block G', 'Beirut Block G - Entry/Exit Gate');
 
 -- --------------------------------------------------------
 

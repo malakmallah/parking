@@ -190,7 +190,6 @@ $stmt=$pdo->prepare($listSql);
 $stmt->execute($params);
 $rows=$stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$liuLogoPath='../assets/img/liu-logo.png';
 $title='Parking Sessions - LIU Parking System';
 
 // For duration display
@@ -208,42 +207,240 @@ function formatDuration(?string $start, ?string $end): string {
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?=htmlspecialchars($title)?></title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--primary:#003366;--gold:#FFB81C;--sidebar:280px;--header:70px}
-body{font-family:'Inter',sans-serif;background:#f5f7fa}
-.sidebar{position:fixed;top:0;left:0;height:100vh;width:var(--sidebar);background:linear-gradient(135deg,var(--primary),#004080);box-shadow:2px 0 10px rgba(0,0,0,.08)}
-.sidebar-header{padding:20px;text-align:center;border-bottom:1px solid rgba(255,255,255,.12)}
-.sidebar-header h4{color:#fff;margin:6px 0 2px;font-weight:600}
-.sidebar-header p{color:rgba(255,255,255,.75);font-size:12px}
-.menu-link{display:flex;align-items:center;padding:12px 15px;color:rgba(255,255,255,.85);text-decoration:none;border-radius:8px;margin:4px 12px}
-.menu-link:hover,.menu-link.active{background:rgba(255,255,255,.1);color:#fff}
-.menu-link i{width:20px;margin-right:10px;text-align:center}
-.main{margin-left:var(--sidebar);min-height:100vh}
-.header{height:var(--header);background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.05);display:flex;align-items:center;padding:0 24px;position:sticky;top:0;z-index:5}
-.header h1{color:var(--primary);font-size:22px;margin:0}
-.content{padding:28px}
-.card{border:1px solid #e9ecef;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
-.table td,.table th{vertical-align:middle}
-.badge-soft{background:#f1f3f5;color:#333}
-@media(max-width:768px){.sidebar{transform:translateX(-100%)}.main{margin-left:0}.content{padding:18px}}
+:root {
+    --primary: #003366;
+    --gold: #FFB81C;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: #f5f7fa;
+    margin: 0;
+    padding: 0;
+}
+
+.header {
+    height: 70px;
+    background: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    display: flex;
+    align-items: center;
+    padding: 0 30px;
+    position: sticky;
+    top: 0;
+    z-index: 999;
+}
+
+.header h1 {
+    color: var(--primary);
+    font-size: 24px;
+    margin: 0;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.content-area {
+    padding: 30px;
+    transition: all 0.3s;
+}
+
+.card {
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+    background: white;
+}
+
+.card-header {
+    padding: 20px;
+    border-bottom: 1px solid #e9ecef;
+    background: #f8f9fa;
+    border-radius: 12px 12px 0 0;
+}
+
+.table {
+    margin: 0;
+}
+
+.table th {
+    background: #f8f9fa;
+    border: none;
+    font-weight: 600;
+    color: var(--primary);
+    padding: 15px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.table td {
+    padding: 15px;
+    border-bottom: 1px solid #e9ecef;
+    vertical-align: middle;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+.badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.badge-soft {
+    background: #f1f3f5;
+    color: #333;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+    font-size: 14px;
+}
+
+.btn-outline-primary {
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    background: transparent;
+}
+
+.btn-outline-primary:hover {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-outline-secondary {
+    border: 1px solid #6c757d;
+    color: #6c757d;
+    background: transparent;
+}
+
+.btn-outline-secondary:hover {
+    background: #6c757d;
+    color: white;
+}
+
+.form-control,
+.form-select {
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    transition: all 0.3s;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0,51,102,0.1);
+}
+
+.form-label {
+    font-weight: 500;
+    color: #374151;
+    font-size: 13px;
+}
+
+.card-footer {
+    padding: 15px 20px;
+    background: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+    border-radius: 0 0 12px 12px;
+}
+
+.pagination {
+    margin: 0;
+}
+
+.page-link {
+    color: var(--primary);
+    border: 1px solid #dee2e6;
+    border-radius: 6px !important;
+    margin: 0 2px;
+}
+
+.page-link:hover {
+    color: white;
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.page-item.active .page-link {
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.page-item.disabled .page-link {
+    color: #6c757d;
+    background-color: #fff;
+    border-color: #dee2e6;
+}
+
+@media (max-width: 768px) {
+    .content-area {
+        padding: 20px;
+    }
+    .card-header {
+        padding: 15px;
+    }
+    .table th,
+    .table td {
+        padding: 10px 8px;
+        font-size: 13px;
+    }
+    .header {
+        padding: 0 20px;
+    }
+    .header h1 {
+        font-size: 20px;
+    }
+    
+    /* Stack form elements on mobile */
+    .card-header .row > div {
+        margin-bottom: 10px;
+    }
+    
+    /* Make table scrollable on mobile */
+    .table-responsive {
+        font-size: 12px;
+    }
+    
+    .table th,
+    .table td {
+        white-space: nowrap;
+        min-width: 100px;
+    }
+}
 </style>
 </head>
 <body>
 <!-- Sidebar -->
-  <?php include 'includes/sidebar.php'; ?>
+<?php include 'includes/sidebar.php'; ?>
 
-<div class="main">
+<!-- CORRECTED: Use main-content class -->
+<div class="main-content">
   <header class="header">
-    <h1>Parking Sessions</h1>
+    <h1><i class="fas fa-history"></i> Parking Sessions</h1>
   </header>
 
-  <div class="content">
+  <div class="content-area">
     <div class="card">
       <div class="card-header">
         <form class="row g-2 align-items-end" method="get">
@@ -373,23 +570,25 @@ body{font-family:'Inter',sans-serif;background:#f5f7fa}
       <?php if($pages>1): ?>
       <div class="card-footer d-flex justify-content-between align-items-center">
         <div class="text-muted small">Page <?=$page?> of <?=$pages?> • Total <?=number_format($total)?></div>
-        <ul class="pagination mb-0">
-          <?php
-            $baseParams = [];
-            if ($q!=='') $baseParams['q']=$q;
-            if ($status!=='') $baseParams['status']=$status;
-            if ($campus_id) $baseParams['campus_id']=$campus_id;
-            if ($date_from!=='') $baseParams['date_from']=$date_from;
-            if ($date_to!=='') $baseParams['date_to']=$date_to;
-            $base = 'sessions.php?'.http_build_query($baseParams);
-            $mk   = fn($p)=> ($base ? $base.'&' : '') . 'page='.$p;
-          ?>
-          <li class="page-item <?=$page<=1?'disabled':''?>"><a class="page-link" href="<?=$page>1?$mk($page-1):'#'?>">Prev</a></li>
-          <?php for($p=max(1,$page-2); $p<=min($pages,$page+2); $p++): ?>
-            <li class="page-item <?=$p==$page?'active':''?>"><a class="page-link" href="<?=$mk($p)?>"><?=$p?></a></li>
-          <?php endfor; ?>
-          <li class="page-item <?=$page>=$pages?'disabled':''?>"><a class="page-link" href="<?=$page<$pages?$mk($page+1):'#'?>">Next</a></li>
-        </ul>
+        <nav>
+          <ul class="pagination mb-0">
+            <?php
+              $baseParams = [];
+              if ($q!=='') $baseParams['q']=$q;
+              if ($status!=='') $baseParams['status']=$status;
+              if ($campus_id) $baseParams['campus_id']=$campus_id;
+              if ($date_from!=='') $baseParams['date_from']=$date_from;
+              if ($date_to!=='') $baseParams['date_to']=$date_to;
+              $base = 'sessions.php?'.http_build_query($baseParams);
+              $mk   = fn($p)=> ($base ? $base.'&' : '') . 'page='.$p;
+            ?>
+            <li class="page-item <?=$page<=1?'disabled':''?>"><a class="page-link" href="<?=$page>1?$mk($page-1):'#'?>">Prev</a></li>
+            <?php for($p=max(1,$page-2); $p<=min($pages,$page+2); $p++): ?>
+              <li class="page-item <?=$p==$page?'active':''?>"><a class="page-link" href="<?=$mk($p)?>"><?=$p?></a></li>
+            <?php endfor; ?>
+            <li class="page-item <?=$page>=$pages?'disabled':''?>"><a class="page-link" href="<?=$page<$pages?$mk($page+1):'#'?>">Next</a></li>
+          </ul>
+        </nav>
       </div>
       <?php endif; ?>
     </div>

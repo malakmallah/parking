@@ -1,7 +1,7 @@
 <?php
 /**
- * LIU Parking System - Dual Scanner (Wall QR + User Barcode)
- * Complete Entry/Exit System
+ * LIU Parking System - Enhanced Scanner with Gmail Verification & Testing
+ * Two-step process: Wall QR + Gmail Verification
  */
 
 session_start();
@@ -17,6 +17,50 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     die("Database connection error. Please try again later.");
+}
+
+// Initialize test data if requested
+if (isset($_GET['setup_test_data']) && $_GET['setup_test_data'] == '1') {
+    try {
+        // Create test campuses and blocks
+        $pdo->exec("INSERT IGNORE INTO campuses (id, name, code) VALUES 
+            (1, 'Main Campus', 'MAIN'),
+            (2, 'Beirut Campus', 'BEI'),
+            (3, 'Saida Campus', 'SAI')");
+        
+        $pdo->exec("INSERT IGNORE INTO blocks (id, campus_id, name) VALUES 
+            (1, 2, 'Block A'),
+            (2, 2, 'Block B'),
+            (3, 2, 'Block G')");
+        
+        // Create test wall codes
+        $pdo->exec("INSERT IGNORE INTO wall_codes (code, description) VALUES 
+            ('CAMPUS:1', 'Main Campus Gate'),
+            ('CAMPUS:2', 'Beirut Campus General Gate'),
+            ('CAMPUS:2|BLOCK:3', 'Beirut Block G - Entry/Exit Gate'),
+            ('CAMPUS:3', 'Saida Campus Gate')");
+        
+        // Create test users with proper campus assignments
+        $pdo->exec("INSERT IGNORE INTO users (FIRST, Last, Email, parking_number, campus_id, block_id, role) VALUES 
+            ('John', 'Doe', 'john.doe@liu.edu.lb', 'MAIN-001', 1, NULL, 'staff'),
+            ('Jane', 'Smith', 'jane.smith@liu.edu.lb', 'BEI-002', 2, NULL, 'instructor'),
+            ('Ahmad', 'Hassan', 'ahmad.hassan@liu.edu.lb', 'BEI-G003', 2, 3, 'staff'),
+            ('Abaas', 'Makki', 'abaas.makki@liu.edu.lb', 'SAI-001281', 3, NULL, 'instructor'),
+            ('Abbas', 'Bassam', 'abbas.bassam@liu.edu.lb', 'SAI-002', 3, NULL, 'staff')");
+        
+        // Create test parking spots
+        $pdo->exec("INSERT IGNORE INTO parking_spots (spot_number, campus_id, block_id, is_occupied, is_reserved) VALUES 
+            ('A-001', 1, NULL, 0, 0),
+            ('A-002', 1, NULL, 0, 0),
+            ('B-001', 2, NULL, 0, 0),
+            ('G-001', 2, 3, 0, 0),
+            ('G-002', 2, 3, 0, 0),
+            ('S-001', 3, NULL, 0, 0)");
+        
+        $test_setup_message = "Test data created successfully!";
+    } catch (Exception $e) {
+        $test_setup_message = "Error creating test data: " . $e->getMessage();
+    }
 }
 
 // Handle AJAX requests
@@ -37,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'status' => 'success',
                 'message' => 'Wall code scanned successfully',
                 'wall_description' => $wall_data['description'],
-                'next_step' => 'user_barcode'
+                'next_step' => 'gmail_verify'
             ]);
         } else {
             echo json_encode([
@@ -48,13 +92,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         exit;
     }
     
-    if ($_POST['action'] === 'scan_user_barcode') {
-        $user_barcode = trim($_POST['user_barcode'] ?? '');
+    if ($_POST['action'] === 'verify_gmail') {
+        $entered_email = trim(strtolower($_POST['gmail'] ?? ''));
         
         if (!isset($_SESSION['selected_wall_code'])) {
             echo json_encode([
                 'status' => 'error',
-                'message' => 'Please scan wall code first'
+                'message' => 'Session expired. Please start again.'
+            ]);
+            exit;
+        }
+        
+        if (!$entered_email) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Please enter your Gmail address.'
             ]);
             exit;
         }
@@ -62,20 +114,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $wall_code = $_SESSION['selected_wall_code'];
         
         try {
-            // Find user by parking number (barcode)
+            // Find user by email address
             $stmt = $pdo->prepare("
                 SELECT u.*, c.name as campus_name 
                 FROM users u 
                 LEFT JOIN campuses c ON u.campus_id = c.id
-                WHERE u.parking_number = ? AND u.Email IS NOT NULL AND u.Email != ''
+                WHERE LOWER(TRIM(u.Email)) = ? AND u.Email IS NOT NULL AND u.Email != ''
             ");
-            $stmt->execute([$user_barcode]);
+            $stmt->execute([$entered_email]);
             $user = $stmt->fetch();
             
             if (!$user) {
                 echo json_encode([
                     'status' => 'error',
-                    'message' => 'User not found with barcode: ' . $user_barcode
+                    'message' => 'User not found with email: ' . $entered_email
+                ]);
+                exit;
+            }
+
+            // Validate campus/location access permissions
+            $wall_code_payload = $wall_code['code'];
+            $allowed_access = false;
+            $access_error_message = '';
+
+            // Parse wall code to get campus and block information
+            if (preg_match('/CAMPUS:(\d+)/', $wall_code_payload, $campus_match)) {
+                $gate_campus_id = (int)$campus_match[1];
+                $gate_block_id = null;
+                
+                if (preg_match('/BLOCK:(\d+)/', $wall_code_payload, $block_match)) {
+                    $gate_block_id = (int)$block_match[1];
+                }
+
+                // Check if user's campus matches the gate campus
+                if ($user['campus_id'] == $gate_campus_id) {
+                    // If gate has specific block, check if user belongs to that block or has general campus access
+                    if ($gate_block_id !== null) {
+                        if ($user['block_id'] == $gate_block_id || $user['block_id'] === null) {
+                            $allowed_access = true;
+                        } else {
+                            // Get block name for error message
+                            $block_stmt = $pdo->prepare("SELECT name FROM blocks WHERE id = ?");
+                            $block_stmt->execute([$gate_block_id]);
+                            $block_info = $block_stmt->fetch();
+                            $access_error_message = "Access denied. This gate is for " . ($block_info['name'] ?? 'Block ' . $gate_block_id) . " only. Your parking assignment is for a different area.";
+                        }
+                    } else {
+                        $allowed_access = true; // Campus-wide gate, user belongs to campus
+                    }
+                } else {
+                    // User's campus doesn't match gate campus
+                    $gate_campus_stmt = $pdo->prepare("SELECT name FROM campuses WHERE id = ?");
+                    $gate_campus_stmt->execute([$gate_campus_id]);
+                    $gate_campus_info = $gate_campus_stmt->fetch();
+                    
+                    $access_error_message = "Access denied. This is a " . ($gate_campus_info['name'] ?? 'Campus ' . $gate_campus_id) . " gate. Your parking assignment (ID: " . $user['parking_number'] . ") is for " . $user['campus_name'] . ". Please use the correct campus gate.";
+                }
+            }
+
+            if (!$allowed_access) {
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => $access_error_message ?: 'Access denied. You do not have permission to use this gate.'
                 ]);
                 exit;
             }
@@ -126,7 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     'entry_time' => date('M j, Y g:i A', strtotime($active_session['entrance_at'])),
                     'exit_time' => date('M j, Y g:i A'),
                     'duration' => $duration_text,
-                    'photo_url' => $user['photo_url']
+                    'photo_url' => $user['photo_url'] ?? null
                 ]);
             } else {
                 // ENTRY PROCESS - Find available spot
@@ -185,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     'block' => $spot_details['block_name'],
                     'entry_gate' => $wall_code['description'],
                     'entry_time' => date('M j, Y g:i A'),
-                    'photo_url' => $user['photo_url']
+                    'photo_url' => $user['photo_url'] ?? null
                 ]);
             }
             
@@ -203,9 +303,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         echo json_encode(['status' => 'success']);
         exit;
     }
+    
+    if ($_POST['action'] === 'get_test_data') {
+        try {
+            $wall_codes = $pdo->query("SELECT * FROM wall_codes ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+            $users = $pdo->query("SELECT FIRST, Last, Email, parking_number, campus_id FROM users WHERE Email IS NOT NULL ORDER BY FIRST")->fetchAll(PDO::FETCH_ASSOC);
+            $active_sessions = $pdo->query("
+                SELECT u.FIRST, u.Last, u.Email, ps.entrance_at, s.spot_number 
+                FROM parking_sessions ps 
+                JOIN users u ON ps.user_id = u.id 
+                JOIN parking_spots s ON ps.spot_id = s.id 
+                WHERE ps.exit_at IS NULL
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            
+            echo json_encode([
+                'status' => 'success',
+                'wall_codes' => $wall_codes,
+                'users' => $users,
+                'active_sessions' => $active_sessions
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]);
+        }
+        exit;
+    }
 }
 
-$pageTitle = "Parking Scanner - LIU System";
+$pageTitle = "Parking Scanner with Gmail Verification - LIU System";
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -234,7 +361,7 @@ $pageTitle = "Parking Scanner - LIU System";
         }
 
         .scanner-container {
-            max-width: 600px;
+            max-width: 700px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -290,16 +417,18 @@ $pageTitle = "Parking Scanner - LIU System";
             display: flex;
             justify-content: center;
             margin-bottom: 2rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .step {
             display: flex;
             align-items: center;
             padding: 0.5rem 1rem;
-            margin: 0 0.5rem;
             border-radius: 25px;
             font-weight: 500;
             transition: all 0.3s;
+            font-size: 0.9rem;
         }
 
         .step.active {
@@ -317,7 +446,27 @@ $pageTitle = "Parking Scanner - LIU System";
             color: #6b7280;
         }
 
-        .scan-btn {
+        .gmail-input-container {
+            display: none;
+            margin-bottom: 1rem;
+        }
+
+        .gmail-input {
+            width: 100%;
+            padding: 1rem;
+            font-size: 1.1rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+
+        .gmail-input:focus {
+            outline: none;
+            border-color: var(--success);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+
+        .scan-btn, .verify-btn {
             width: 100%;
             padding: 1rem;
             font-size: 1.1rem;
@@ -335,6 +484,11 @@ $pageTitle = "Parking Scanner - LIU System";
         .btn-primary:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, var(--secondary), #f59e0b);
+            color: white;
         }
 
         .result-display {
@@ -416,6 +570,47 @@ $pageTitle = "Parking Scanner - LIU System";
             z-index: 100;
         }
 
+        .security-notice {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid var(--secondary);
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        /* Testing Panel Styles */
+        .testing-panel {
+            background: rgba(52, 152, 219, 0.1);
+            border: 2px solid #3498db;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .test-section {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+        }
+
+        .test-data-display {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .quick-test-btn {
+            margin: 0.25rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+        }
+
         @media (max-width: 768px) {
             .scanner-container {
                 padding: 1rem;
@@ -426,6 +621,13 @@ $pageTitle = "Parking Scanner - LIU System";
             .scanner-overlay {
                 width: 150px;
                 height: 150px;
+            }
+            .step {
+                font-size: 0.8rem;
+                padding: 0.4rem 0.8rem;
+            }
+            .testing-panel {
+                padding: 1rem;
             }
         }
     </style>
@@ -443,18 +645,102 @@ $pageTitle = "Parking Scanner - LIU System";
     <div class="scanner-container">
         <div class="scanner-card">
             <div class="scanner-header">
-                <h1><i class="fas fa-qrcode me-2"></i>Parking Scanner</h1>
-                <p>Two-step scanning process for entry/exit</p>
+                <h1><i class="fas fa-qrcode me-2"></i>Secure Parking Scanner</h1>
+                <p>Two-step verification process for entry/exit</p>
             </div>
 
             <div class="scanner-body">
+                <?php if (isset($test_setup_message)): ?>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i><?php echo htmlspecialchars($test_setup_message); ?>
+                    </div>
+                <?php endif; ?>
+
+                <!-- Testing Panel -->
+                <div class="testing-panel" id="testingPanel">
+                    <h5><i class="fas fa-flask me-2" style="color: #3498db;"></i>Testing Panel</h5>
+                    
+                    <!-- Test Data Setup -->
+                    <div class="test-section">
+                        <h6><i class="fas fa-database me-2"></i>Database Setup</h6>
+                        <p class="small mb-2">Initialize test data for development:</p>
+                        <a href="?setup_test_data=1" class="btn btn-sm btn-info">
+                            <i class="fas fa-plus me-1"></i>Create Test Data
+                        </a>
+                        <button class="btn btn-sm btn-secondary" onclick="loadTestData()">
+                            <i class="fas fa-refresh me-1"></i>Load Current Data
+                        </button>
+                    </div>
+
+                    <!-- Manual Testing -->
+                    <div class="test-section">
+                        <h6><i class="fas fa-keyboard me-2"></i>Manual Testing</h6>
+                        
+                        <!-- Wall Code Test -->
+                        <div id="wallCodeTest">
+                            <label class="form-label">Test Wall Code:</label>
+                            <div class="input-group mb-2">
+                                <input type="text" id="wallCodeInput" class="form-control" placeholder="e.g., CAMPUS:2|BLOCK:3">
+                                <button class="btn btn-success" onclick="testWallCode()">
+                                    <i class="fas fa-qr-code me-1"></i>Test
+                                </button>
+                            </div>
+                            <div class="mb-2">
+                                <small class="text-muted">Quick test buttons:</small><br>
+                                <button class="btn btn-outline-primary btn-sm quick-test-btn" onclick="quickTest('CAMPUS:1')">Main Campus</button>
+                                <button class="btn btn-outline-primary btn-sm quick-test-btn" onclick="quickTest('CAMPUS:2')">Beirut Campus</button>
+                                <button class="btn btn-outline-primary btn-sm quick-test-btn" onclick="quickTest('CAMPUS:2|BLOCK:3')">Beirut Block G</button>
+                                <button class="btn btn-outline-primary btn-sm quick-test-btn" onclick="quickTest('CAMPUS:3')">Saida Campus</button>
+                            </div>
+                        </div>
+
+                        <!-- Gmail Test -->
+                        <div id="gmailTestSection" style="display: none;">
+                            <label class="form-label">Test Gmail Address:</label>
+                            <div class="input-group mb-2">
+                                <input type="email" id="testGmailInput" class="form-control" placeholder="user@liu.edu.lb">
+                                <button class="btn btn-warning" onclick="testGmail()">
+                                    <i class="fas fa-envelope me-1"></i>Test
+                                </button>
+                            </div>
+                            <div class="mb-2">
+                                <small class="text-muted">Quick test emails:</small><br>
+                                <button class="btn btn-outline-success btn-sm quick-test-btn" onclick="quickEmailTest('ahmad.hassan@liu.edu.lb')" title="Beirut Block G user">ahmad.hassan@liu.edu.lb ✓</button>
+                                <button class="btn btn-outline-danger btn-sm quick-test-btn" onclick="quickEmailTest('abaas.makki@liu.edu.lb')" title="Saida user - should be denied">abaas.makki@liu.edu.lb ✗</button>
+                                <button class="btn btn-outline-success btn-sm quick-test-btn" onclick="quickEmailTest('jane.smith@liu.edu.lb')" title="General Beirut user">jane.smith@liu.edu.lb ✓</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Test Data Display -->
+                    <div class="test-section">
+                        <h6><i class="fas fa-list me-2"></i>Current Test Data</h6>
+                        <div id="testDataDisplay" class="test-data-display">
+                            <p class="text-muted">Click "Load Current Data" to see available test data</p>
+                        </div>
+                    </div>
+
+                    <div class="text-center">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="toggleTestingPanel()">
+                            <i class="fas fa-eye-slash me-1"></i>Hide Testing Panel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Show Testing Panel Button (hidden initially) -->
+                <div class="text-center mb-3" id="showTestingBtn" style="display: none;">
+                    <button class="btn btn-outline-info btn-sm" onclick="toggleTestingPanel()">
+                        <i class="fas fa-flask me-1"></i>Show Testing Panel
+                    </button>
+                </div>
+
                 <!-- Step Indicator -->
                 <div class="step-indicator">
                     <div class="step active" id="step1">
                         <i class="fas fa-door-open me-2"></i>1. Wall Code
                     </div>
                     <div class="step inactive" id="step2">
-                        <i class="fas fa-barcode me-2"></i>2. User Barcode
+                        <i class="fas fa-envelope me-2"></i>2. Gmail Verify
                     </div>
                 </div>
 
@@ -466,6 +752,12 @@ $pageTitle = "Parking Scanner - LIU System";
                     </button>
                 </div>
 
+                <!-- Security Notice -->
+                <div class="security-notice" id="securityNotice">
+                    <i class="fas fa-shield-alt me-2"></i>
+                    <strong>Enhanced Security:</strong> Gmail verification required to prevent unauthorized access
+                </div>
+
                 <!-- Instructions -->
                 <div class="alert alert-warning" id="instructions">
                     <i class="fas fa-info-circle me-2"></i>
@@ -473,9 +765,29 @@ $pageTitle = "Parking Scanner - LIU System";
                 </div>
 
                 <!-- Camera Container -->
-                <div class="camera-container">
+                <div class="camera-container" id="cameraContainer">
                     <video id="camera-feed" autoplay playsinline muted></video>
                     <div class="scanner-overlay"></div>
+                </div>
+
+                <!-- Gmail Input Container -->
+                <div class="gmail-input-container" id="gmailContainer">
+                    <div class="alert alert-info">
+                        <i class="fas fa-user-check me-2"></i>
+                        <strong>Location Selected:</strong> <span id="selectedLocation"></span><br>
+                        <small>Please enter your Gmail address to verify your identity</small>
+                    </div>
+                    <label for="gmailInput" class="form-label">
+                        <i class="fas fa-envelope me-2"></i>Enter your Gmail address:
+                    </label>
+                    <input type="email" 
+                           id="gmailInput" 
+                           class="gmail-input" 
+                           placeholder="your.email@liu.edu.lb"
+                           autocomplete="email">
+                    <button class="verify-btn btn btn-warning" onclick="verifyGmail()">
+                        <i class="fas fa-check-circle me-2"></i>Verify Access
+                    </button>
                 </div>
 
                 <!-- Scan Button -->
@@ -514,12 +826,34 @@ $pageTitle = "Parking Scanner - LIU System";
 
     <script>
         let video, canvas, context, scanning = false, stream = null;
-        let currentStep = 'wall_code'; // 'wall_code' or 'user_barcode'
+        let currentStep = 'wall_code'; // Only 2 values: 'wall_code' | 'gmail_verify'
         let wallCodeSelected = false;
 
         document.addEventListener('DOMContentLoaded', function() {
             canvas = document.createElement('canvas');
             context = canvas.getContext('2d');
+            
+            // Enter key handlers
+            document.getElementById('gmailInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    verifyGmail();
+                }
+            });
+
+            document.getElementById('testGmailInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    testGmail();
+                }
+            });
+
+            document.getElementById('wallCodeInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    testWallCode();
+                }
+            });
+
+            // Load test data on page load
+            loadTestData();
         });
 
         async function startCamera() {
@@ -551,7 +885,7 @@ $pageTitle = "Parking Scanner - LIU System";
 
             } catch (error) {
                 console.error('Camera error:', error);
-                alert('Camera access denied. Please check permissions.');
+                showError('Camera access denied. Please use the manual testing options or check camera permissions.');
                 btn.innerHTML = '<i class="fas fa-camera me-2"></i>Start Camera';
                 btn.disabled = false;
             }
@@ -596,7 +930,7 @@ $pageTitle = "Parking Scanner - LIU System";
 
             if (currentStep === 'wall_code') {
                 // Process wall code
-                fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                fetch(window.location.pathname, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({
@@ -609,10 +943,19 @@ $pageTitle = "Parking Scanner - LIU System";
                     showLoading(false);
                     if (data.status === 'success') {
                         wallCodeSelected = true;
-                        currentStep = 'user_barcode';
+                        currentStep = 'gmail_verify';
                         updateUI();
                         document.getElementById('currentWallCode').textContent = data.wall_description;
+                        document.getElementById('selectedLocation').textContent = data.wall_description;
                         document.getElementById('wallCodeDisplay').style.display = 'block';
+                        document.getElementById('gmailContainer').style.display = 'block';
+                        document.getElementById('cameraContainer').style.display = 'none';
+                        document.getElementById('scanBtn').style.display = 'none';
+                        document.getElementById('gmailInput').focus();
+                        
+                        // Show Gmail test section
+                        document.getElementById('gmailTestSection').style.display = 'block';
+                        document.getElementById('wallCodeTest').style.display = 'none';
                     } else {
                         showError(data.message);
                     }
@@ -621,27 +964,41 @@ $pageTitle = "Parking Scanner - LIU System";
                     showLoading(false);
                     showError('Network error. Please try again.');
                 });
-
-            } else if (currentStep === 'user_barcode') {
-                // Process user barcode
-                fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        action: 'scan_user_barcode',
-                        user_barcode: scannedData
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    showLoading(false);
-                    displayResult(data);
-                })
-                .catch(error => {
-                    showLoading(false);
-                    showError('Network error. Please try again.');
-                });
             }
+        }
+
+        function verifyGmail() {
+            const gmail = document.getElementById('gmailInput').value.trim();
+            
+            if (!gmail) {
+                showError('Please enter your Gmail address.');
+                return;
+            }
+            
+            if (!gmail.includes('@')) {
+                showError('Please enter a valid email address.');
+                return;
+            }
+            
+            showLoading(true);
+            
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    action: 'verify_gmail',
+                    gmail: gmail
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                showLoading(false);
+                displayResult(data);
+            })
+            .catch(error => {
+                showLoading(false);
+                showError('Network error. Please try again.');
+            });
         }
 
         function updateUI() {
@@ -653,15 +1010,15 @@ $pageTitle = "Parking Scanner - LIU System";
                 step1.className = 'step active';
                 step2.className = 'step inactive';
                 instructions.innerHTML = 'First, scan the <strong>Wall QR Code</strong> to select location';
-            } else {
+            } else if (currentStep === 'gmail_verify') {
                 step1.className = 'step completed';
                 step2.className = 'step active';
-                instructions.innerHTML = 'Now scan your <strong>User Barcode</strong> (parking number)';
+                instructions.innerHTML = 'Enter your <strong>Gmail address</strong> to verify your identity';
             }
         }
 
         function resetScanner() {
-            fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+            fetch(window.location.pathname, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: new URLSearchParams({ action: 'reset_scanner' })
@@ -671,7 +1028,16 @@ $pageTitle = "Parking Scanner - LIU System";
             currentStep = 'wall_code';
             updateUI();
             document.getElementById('wallCodeDisplay').style.display = 'none';
+            document.getElementById('gmailContainer').style.display = 'none';
+            document.getElementById('cameraContainer').style.display = 'block';
+            document.getElementById('scanBtn').style.display = 'block';
             document.getElementById('resultDisplay').style.display = 'none';
+            document.getElementById('gmailInput').value = '';
+            document.getElementById('testGmailInput').value = '';
+            
+            // Reset testing sections
+            document.getElementById('wallCodeTest').style.display = 'block';
+            document.getElementById('gmailTestSection').style.display = 'none';
         }
 
         function displayResult(data) {
@@ -720,12 +1086,24 @@ $pageTitle = "Parking Scanner - LIU System";
             }
 
             resultDisplay.style.display = 'block';
+            
+            // Hide Gmail container when showing results
+            document.getElementById('gmailContainer').style.display = 'none';
 
             // Auto-hide and reset after delay
             setTimeout(() => {
                 resultDisplay.style.display = 'none';
                 if (data.status === 'success') {
                     resetScanner();
+                } else {
+                    // On error, allow retry from current step
+                    if (currentStep === 'gmail_verify') {
+                        document.getElementById('gmailContainer').style.display = 'block';
+                        document.getElementById('gmailInput').value = '';
+                        document.getElementById('gmailInput').focus();
+                    } else {
+                        resetScanner();
+                    }
                 }
             }, data.status === 'success' ? 8000 : 5000);
         }
@@ -739,6 +1117,101 @@ $pageTitle = "Parking Scanner - LIU System";
 
         function showLoading(show) {
             document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+        }
+
+        // Testing Functions
+        function testWallCode() {
+            const wallCode = document.getElementById('wallCodeInput').value.trim();
+            if (!wallCode) {
+                alert('Please enter a wall code');
+                return;
+            }
+            processScannedCode(wallCode);
+        }
+
+        function testGmail() {
+            const gmail = document.getElementById('testGmailInput').value.trim();
+            if (!gmail) {
+                alert('Please enter a Gmail address');
+                return;
+            }
+            document.getElementById('gmailInput').value = gmail;
+            verifyGmail();
+        }
+
+        function quickTest(code) {
+            document.getElementById('wallCodeInput').value = code;
+            testWallCode();
+        }
+
+        function quickEmailTest(email) {
+            document.getElementById('testGmailInput').value = email;
+            testGmail();
+        }
+
+        function loadTestData() {
+            showLoading(true);
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ action: 'get_test_data' })
+            })
+            .then(response => response.json())
+            .then(data => {
+                showLoading(false);
+                if (data.status === 'success') {
+                    let html = '';
+                    
+                    if (data.wall_codes.length > 0) {
+                        html += '<h6><i class="fas fa-door-open me-2"></i>Available Wall Codes:</h6>';
+                        data.wall_codes.forEach(wc => {
+                            html += `<div class="mb-1"><code>${wc.code}</code> - ${wc.description}</div>`;
+                        });
+                        html += '<hr>';
+                    }
+                    
+                    if (data.users.length > 0) {
+                        html += '<h6><i class="fas fa-users me-2"></i>Available Users:</h6>';
+                        data.users.forEach(user => {
+                            const campusText = user.campus_id == 1 ? 'Main' : user.campus_id == 2 ? 'Beirut' : 'Saida';
+                            html += `<div class="mb-1"><strong>${user.FIRST} ${user.Last}</strong> - <code>${user.Email}</code> (${user.parking_number} - ${campusText})</div>`;
+                        });
+                        html += '<hr>';
+                    }
+                    
+                    if (data.active_sessions.length > 0) {
+                        html += '<h6><i class="fas fa-car me-2"></i>Active Parking Sessions:</h6>';
+                        data.active_sessions.forEach(session => {
+                            html += `<div class="mb-1"><strong>${session.FIRST} ${session.Last}</strong> (${session.Email}) - Spot ${session.spot_number} since ${new Date(session.entrance_at).toLocaleString()}</div>`;
+                        });
+                    } else {
+                        html += '<h6><i class="fas fa-car me-2"></i>Active Parking Sessions:</h6><div class="text-muted">No active sessions</div>';
+                    }
+                    
+                    document.getElementById('testDataDisplay').innerHTML = html;
+                } else {
+                    document.getElementById('testDataDisplay').innerHTML = 
+                        '<div class="alert alert-danger">Error loading test data: ' + data.message + '</div>';
+                }
+            })
+            .catch(error => {
+                showLoading(false);
+                document.getElementById('testDataDisplay').innerHTML = 
+                    '<div class="alert alert-danger">Network error loading test data</div>';
+            });
+        }
+
+        function toggleTestingPanel() {
+            const panel = document.getElementById('testingPanel');
+            const showBtn = document.getElementById('showTestingBtn');
+            
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                showBtn.style.display = 'none';
+            } else {
+                panel.style.display = 'none';
+                showBtn.style.display = 'block';
+            }
         }
 
         // Initialize UI

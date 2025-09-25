@@ -104,23 +104,55 @@ if ($action==='bulk'){
   }
 }
 
-/* ------------------ Pagination for list ------------------ */
+/* ------------------ Pagination for list + SEARCH FILTER ------------------ */
 $perPage = max(5, min(100, (int)($_GET['per_page'] ?? 20)));
 $page    = max(1, (int)($_GET['page'] ?? 1));
 $offset  = ($page-1)*$perPage;
 
+/* NEW: read search term (q) */
+$search = trim($_GET['q'] ?? '');  // stays empty if not provided
+
 $total=0;
 if ($action==='list'){
-  $total = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role IN ('staff','instructor')")->fetchColumn();
+  /* Build base WHERE and params */
+  $where = "u.role IN ('staff','instructor')";
+  $params = [];
+
+  if ($search !== '') {
+    // Using LIKE over multiple columns, case-insensitive via collation
+    $where .= " AND (
+        u.First LIKE :q
+        OR u.Last LIKE :q
+        OR u.Email LIKE :q
+        OR u.Title LIKE :q
+        OR u.parking_number LIKE :q
+        OR c.name LIKE :q
+      )";
+    $params[':q'] = '%'.$search.'%';
+  }
+
+  /* Count with same WHERE (and same JOIN for campus) */
+  $countSql = "
+    SELECT COUNT(*) FROM users u
+    LEFT JOIN campuses c ON u.Campus COLLATE utf8mb4_unicode_ci = c.name COLLATE utf8mb4_unicode_ci
+    WHERE $where
+  ";
+  $stmtCnt = $pdo->prepare($countSql);
+  foreach ($params as $k=>$v) { $stmtCnt->bindValue($k,$v,PDO::PARAM_STR); }
+  $stmtCnt->execute();
+  $total = (int)$stmtCnt->fetchColumn();
+
+  /* Fetch page */
   $stmt=$pdo->prepare("
     SELECT u.*, c.name campus_name, c.code campus_code,
            DATE_FORMAT(u.created_at,'%M %d, %Y') AS formatted_date
     FROM users u
     LEFT JOIN campuses c ON u.Campus COLLATE utf8mb4_unicode_ci = c.name COLLATE utf8mb4_unicode_ci
-    WHERE u.role IN ('staff','instructor')
+    WHERE $where
     ORDER BY u.created_at DESC
     LIMIT :lim OFFSET :off
   ");
+  foreach ($params as $k=>$v) { $stmt->bindValue($k,$v,PDO::PARAM_STR); }
   $stmt->bindValue(':lim',$perPage,PDO::PARAM_INT);
   $stmt->bindValue(':off',$offset,PDO::PARAM_INT);
   $stmt->execute();
@@ -357,6 +389,16 @@ $totalPages = max(1, (int)ceil($total / $perPage));
         <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
           <h3 class="card-title mb-0"><i class="fas fa-id-card me-2"></i>Select Users for ID Card Generation</h3>
           <div class="d-flex align-items-center gap-2">
+            <!-- NEW: Search form (GET) -->
+            <form class="d-flex gap-2" method="GET" action="cards.php">
+              <input type="hidden" name="action" value="list">
+              <input type="text" name="q" class="form-control form-control-sm" placeholder="Search name, email, campus, parking..."
+                     value="<?= htmlspecialchars($search) ?>">
+              <button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-search me-1"></i>Search</button>
+              <?php if ($search!==''): ?>
+                <a class="btn btn-sm btn-outline-secondary" href="cards.php?action=list"><i class="fas fa-times me-1"></i>Clear</a>
+              <?php endif; ?>
+            </form>
             <a class="btn btn-outline-secondary btn-sm" href="?action=bulk&all=1"><i class="fas fa-layer-group me-1"></i>Generate All</a>
           </div>
         </div>
@@ -429,7 +471,12 @@ $totalPages = max(1, (int)ceil($total / $perPage));
             <nav>
               <ul class="pagination mb-0">
                 <?php
-                  $qs = function($p) use($perPage){ return '?action=list&page='.$p.'&per_page='.$perPage; };
+                  // keep q and per_page in pagination links
+                  $qs = function($p) use($perPage,$search){
+                    $base = '?action=list&page='.$p.'&per_page='.$perPage;
+                    if ($search!=='') $base .= '&q='.urlencode($search);
+                    return $base;
+                  };
                   $disabledPrev = $page<=1 ? ' disabled':'';
                   $disabledNext = $page>=$totalPages ? ' disabled':'';
                 ?>

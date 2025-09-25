@@ -118,14 +118,8 @@ $campuses = $pdo->query("SELECT id, name, code FROM campuses ORDER BY name")->fe
 $blocks = $pdo->query("SELECT id, campus_id, name FROM blocks ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Calculate statistics
-$stats = [
-    'total' => count($parking_data),
-    'available' => count(array_filter($parking_data, fn($s) => !$s['is_occupied'] && !$s['is_reserved'])),
-    'occupied' => count(array_filter($parking_data, fn($s) => $s['is_occupied'])),
-    'reserved' => count(array_filter($parking_data, fn($s) => $s['is_reserved'] && !$s['is_occupied']))
-];
-
-// Search and pagination for table view
+// Calculate statistics (keep this unchanged for 3D view, but add filtered stats for search)
+// Search and pagination for table view (MOVE THIS UP FIRST)
 $q = trim($_GET['q'] ?? '');
 $page = max(1, (int)($_GET['page'] ?? 1));
 $per = 12;
@@ -142,24 +136,71 @@ if ($q !== '') {
 }
 $whereSql = $where ? ('WHERE '.implode(' AND ',$where)) : '';
 
+// Get total count with proper search filtering
 $cnt=$pdo->prepare("SELECT COUNT(*) FROM parking_spots ps LEFT JOIN campuses c ON c.id = ps.campus_id LEFT JOIN blocks b ON b.id = ps.block_id $whereSql");
 $cnt->execute($params);
 $total = (int)$cnt->fetchColumn();
 $pages = max(1, (int)ceil($total/$per));
 
+// NOW calculate statistics (after $q and $total are defined)
+$stats = [
+    'total' => count($parking_data),
+    'available' => count(array_filter($parking_data, fn($s) => !$s['is_occupied'] && !$s['is_reserved'])),
+    'occupied' => count(array_filter($parking_data, fn($s) => $s['is_occupied'])),
+    'reserved' => count(array_filter($parking_data, fn($s) => $s['is_reserved'] && !$s['is_occupied']))
+];
+
+// For search results display (now $q and $total are defined)
+$filtered_total = $q !== '' ? $total : $stats['total'];
+$page = max(1, (int)($_GET['page'] ?? 1));
+$per = 12;
+$off = ($page-1)*$per;
+
+$where = [];
+$params = [];
+if ($q !== '') {
+    $where[] = "(ps.spot_number LIKE ? OR c.name LIKE ? OR c.code LIKE ? OR b.name LIKE ?)";
+    $params[] = "%$q%";
+    $params[] = "%$q%";
+    $params[] = "%$q%";
+    $params[] = "%$q%";
+}
+$whereSql = $where ? ('WHERE '.implode(' AND ',$where)) : '';
+
+// Get total count with proper search filtering
+$cnt=$pdo->prepare("SELECT COUNT(*) FROM parking_spots ps LEFT JOIN campuses c ON c.id = ps.campus_id LEFT JOIN blocks b ON b.id = ps.block_id $whereSql");
+$cnt->execute($params);
+$total = (int)$cnt->fetchColumn();
+$pages = max(1, (int)ceil($total/$per));
+
+// Get filtered data directly from database for table view
 $table_spots = [];
-if (!empty($parking_data)) {
-    // Apply search filter and pagination to parking_data for table view
-    $filtered_spots = $parking_data;
-    if ($q !== '') {
-        $filtered_spots = array_filter($parking_data, function($spot) use ($q) {
-            return stripos($spot['spot_number'], $q) !== false ||
-                   stripos($spot['campus_name'], $q) !== false ||
-                   stripos($spot['campus_code'], $q) !== false ||
-                   stripos($spot['block_name'], $q) !== false;
-        });
-    }
-    $table_spots = array_slice($filtered_spots, $off, $per);
+if ($total > 0) {
+    $table_stmt = $pdo->prepare("
+        SELECT 
+            ps.id,
+            ps.spot_number,
+            ps.campus_id,
+            ps.block_id,
+            ps.is_reserved,
+            ps.is_occupied,
+            c.name as campus_name,
+            c.code as campus_code,
+            b.name as block_name,
+            sess.entrance_at,
+            u.FIRST,
+            u.Last
+        FROM parking_spots ps
+        LEFT JOIN campuses c ON c.id = ps.campus_id
+        LEFT JOIN blocks b ON b.id = ps.block_id
+        LEFT JOIN parking_sessions sess ON sess.spot_id = ps.id AND sess.exit_at IS NULL
+        LEFT JOIN users u ON u.id = sess.user_id
+        $whereSql
+        ORDER BY c.name, b.name, ps.spot_number
+        LIMIT $per OFFSET $off
+    ");
+    $table_stmt->execute($params);
+    $table_spots = $table_stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>
 <!DOCTYPE html>
@@ -639,7 +680,13 @@ if (!empty($parking_data)) {
                             <div class="col-auto"><a class="btn btn-outline-secondary" href="?">Clear</a></div>
                             <?php endif; ?>
                             <div class="col ms-auto text-end">
-                                <span class="text-muted small">Total: <?=number_format($total)?></span>
+                                <span class="text-muted small">
+                                <?php if ($q !== ''): ?>
+                                    Found: <?=number_format($total)?> of <?=number_format(count($parking_data))?>
+                                <?php else: ?>
+                                    Total: <?=number_format($total)?>
+                                <?php endif; ?>
+                            </span>
                             </div>
                         </form>
                     </div>

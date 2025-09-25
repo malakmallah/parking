@@ -2,21 +2,6 @@
 /**
  * LIU Parking System - Wall Codes (Shared Box Code)
  * Location: /admin/wall_codes.php
- *
- * Tables used:
- * - wall_codes(id, code, description)
- * - campuses(id, name, code)
- * - blocks(id, campus_id, name)
- * - users(id, FIRST, Last, Email, campus_id, role [, block_id])
- * - barcode_boxes(id, campus_id, block_id, code)   <-- shared code source
- * - parking_sessions (created lightly if missing; no FKs to avoid engine/type issues)
- *
- * Behavior:
- * - "Generate Wall Codes" creates rows in wall_codes:
- *      CAMPUS:<id>           (all campuses)
- *      CAMPUS:<id>|BLOCK:<b> (Beirut blocks)
- * - "Preview Shared Code" shows a large QR for the selected gate +
- *   optional per-user cards, each using the SAME shared code from barcode_boxes.
  */
 
 session_start();
@@ -151,58 +136,293 @@ $pageTitle = "Wall Codes (Shared Box Code) - LIU Parking";
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{ --primary:#003366; --secondary:#FFB81C; --sidebar:280px; }
-body{ font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif; background:#f5f7fa; }
-.sidebar{ position:fixed; left:0; top:0; width:var(--sidebar); height:100vh; color:#fff;
-  background:linear-gradient(135deg,var(--primary),#004080); padding:18px; overflow-y:auto; }
-.sidebar a{ color:rgba(255,255,255,.85); text-decoration:none; display:block; padding:10px 14px; border-radius:8px; }
-.sidebar a.active,.sidebar a:hover{ background:rgba(255,255,255,.12); color:#fff; }
-.main{ margin-left:var(--sidebar); }
-.header{ background:#fff; border-bottom:1px solid #e5e7eb; padding:16px 24px; position:sticky; top:0; z-index:5;}
-.qcard{ border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; text-align:center; position:relative; }
-.qcard.has-users{ border-left: 4px solid var(--secondary); }
-.qr{ width:180px; height:180px; margin:0 auto 8px auto; }
-.user-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; margin-top:15px; }
-.user-card{ background:#fff; border:1px solid #e9ecef; border-radius:10px; padding:10px; }
-.user-card .qr{ width:140px; height:140px; }
-.small-muted{ color:#6b7280; font-size:12px; }
-.badge-sessions{ position:absolute; top:10px; right:10px; }
-.wall-selector{ background:#fff; padding:20px; border-radius:12px; margin-bottom:20px; }
-.code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-weight:600; }
-@media print{
-  .sidebar, .header, .toolbar, .btn, .alert, .wall-selector{ display:none !important; }
-  .container{ max-width:none; }
-  .col-print-6{ width:50%; padding:8px; float:left; }
-  .qr{ width:120px !important; height:120px !important; }
+:root {
+    --primary: #003366;
+    --gold: #FFB81C;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: #f5f7fa;
+    margin: 0;
+    padding: 0;
+}
+
+.header {
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 20px 30px;
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.header h1 {
+    color: var(--primary);
+    font-size: 24px;
+    margin: 0;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.content-area {
+    padding: 30px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+    font-size: 14px;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #004080;
+    transform: translateY(-1px);
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+    transform: translateY(-1px);
+}
+
+.btn-outline-secondary {
+    border: 1px solid #6c757d;
+    color: #6c757d;
+    background: transparent;
+}
+
+.btn-outline-secondary:hover {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.qcard {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px;
+    background: #fff;
+    text-align: center;
+    position: relative;
+    transition: all 0.3s;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+}
+
+.qcard:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.qcard.has-users {
+    border-left: 4px solid var(--gold);
+}
+
+.qr {
+    width: 180px;
+    height: 180px;
+    margin: 0 auto 12px auto;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.user-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.user-card {
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    padding: 15px;
+    text-align: center;
+    transition: all 0.3s;
+}
+
+.user-card:hover {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.user-card .qr {
+    width: 140px;
+    height: 140px;
+}
+
+.small-muted {
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.badge-sessions {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+}
+
+.wall-selector {
+    background: #fff;
+    padding: 25px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+    border: 1px solid #e9ecef;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+}
+
+.wall-selector h6 {
+    color: var(--primary);
+    font-weight: 600;
+    margin-bottom: 15px;
+}
+
+.code {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-weight: 600;
+    background: #f8f9fa;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.alert {
+    border-radius: 10px;
+    border: none;
+    padding: 15px 20px;
+}
+
+.alert-success {
+    background: linear-gradient(135deg, #d4edda, #c3e6cb);
+    color: #155724;
+}
+
+.alert-danger {
+    background: linear-gradient(135deg, #f8d7da, #f1b0b7);
+    color: #721c24;
+}
+
+.form-select,
+.form-control {
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    transition: all 0.3s;
+}
+
+.form-select:focus,
+.form-control:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0,51,102,0.1);
+}
+
+@media print {
+    .sidebar,
+    .header,
+    .toolbar,
+    .btn,
+    .alert,
+    .wall-selector {
+        display: none !important;
+    }
+    .container {
+        max-width: none;
+    }
+    .col-print-6 {
+        width: 50%;
+        padding: 8px;
+        float: left;
+    }
+    .qr {
+        width: 120px !important;
+        height: 120px !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .content-area {
+        padding: 20px;
+    }
+    .wall-selector {
+        padding: 20px;
+    }
+    .header {
+        padding: 15px 20px;
+    }
+    .header h1 {
+        font-size: 20px;
+    }
+    .qr {
+        width: 150px;
+        height: 150px;
+    }
+    .user-card .qr {
+        width: 120px;
+        height: 120px;
+    }
 }
 </style>
 </head>
 <body>
-  <?php include 'includes/sidebar.php'; ?>
+<?php include 'includes/sidebar.php'; ?>
 
-<div class="main">
-  <div class="header d-flex align-items-center">
-    <h5 class="mb-0"><i class="fa-solid fa-qrcode text-primary me-2"></i>Wall Codes (Shared Box Code)</h5>
-    <div class="ms-auto d-flex gap-2">
+<!-- CORRECTED: Use main-content class -->
+<div class="main-content">
+  <div class="header d-flex align-items-center justify-content-between">
+    <h1><i class="fa-solid fa-qrcode text-primary"></i>Wall Codes (Shared Box Code)</h1>
+    <div class="d-flex gap-2">
       <form method="post" class="d-inline">
         <button class="btn btn-primary btn-sm" name="ensure_codes">
           <i class="fa-solid fa-wand-magic-sparkles me-1"></i> Generate Wall Codes
         </button>
       </form>
-      <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="fa-solid fa-print me-1"></i>Print</button>
+      <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+        <i class="fa-solid fa-print me-1"></i>Print
+      </button>
     </div>
   </div>
 
-  <div class="container py-3">
-    <?php if($success): ?><div class="alert alert-success"><?= htmlspecialchars($success) ?></div><?php endif;?>
-    <?php if($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif;?>
+  <div class="content-area">
+    <?php if($success): ?>
+      <div class="alert alert-success">
+        <i class="fa fa-check-circle me-2"></i><?= htmlspecialchars($success) ?>
+      </div>
+    <?php endif;?>
+    
+    <?php if($error): ?>
+      <div class="alert alert-danger">
+        <i class="fa fa-exclamation-circle me-2"></i><?= htmlspecialchars($error) ?>
+      </div>
+    <?php endif;?>
 
     <!-- Preview shared code selector -->
     <div class="wall-selector">
       <h6><i class="fa-solid fa-barcode me-2"></i>Preview Shared Code for a Gate</h6>
-      <form method="post" class="row g-3">
+      <form method="post" class="row g-3 align-items-end">
         <div class="col-md-8">
+          <label class="form-label">Select Gate/Location:</label>
           <select name="wall_code_id" class="form-select" required>
             <option value="">Select a gate/location…</option>
             <?php foreach($rows as $r): ?>
@@ -238,15 +458,15 @@ body{ font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
         </div>
 
         <?php if (!empty($previewUsers)): ?>
-          <hr>
+          <hr class="my-4">
           <div class="small text-muted mb-2">User cards (all show the same shared code)</div>
           <div class="user-grid">
             <?php foreach($previewUsers as $u): 
               $full = trim(($u['FIRST'] ?? '').' '.($u['Last'] ?? '')); ?>
               <div class="user-card">
-                <div class="fw-semibold mb-1" style="font-size:13px;"><?= htmlspecialchars($full ?: '—') ?></div>
+                <div class="fw-semibold mb-2" style="font-size:13px;"><?= htmlspecialchars($full ?: '—') ?></div>
                 <div class="qr user-qr" data-code="<?= htmlspecialchars($sharedBoxCode) ?>"></div>
-                <div class="text-center small mt-1 code"><?= htmlspecialchars($sharedBoxCode) ?></div>
+                <div class="text-center small mt-2 code"><?= htmlspecialchars($sharedBoxCode) ?></div>
               </div>
             <?php endforeach; ?>
           </div>
@@ -264,13 +484,17 @@ body{ font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
               <span class="badge bg-success badge-sessions"><?= (int)$r['active_sessions'] ?> active</span>
             <?php endif; ?>
             <div class="qr gate-qr" data-payload="GATE:<?= htmlspecialchars($r['code']) ?>"></div>
-            <div class="fw-semibold"><?= htmlspecialchars($r['description'] ?: $r['code']) ?></div>
+            <div class="fw-semibold mb-1"><?= htmlspecialchars($r['description'] ?: $r['code']) ?></div>
             <div class="small-muted">Gate ID: <span class="code"><?= htmlspecialchars($r['code']) ?></span></div>
           </div>
         </div>
       <?php endforeach; ?>
       <?php if(!$rows): ?>
-        <div class="col-12"><div class="alert alert-info">No wall codes yet. Click <b>Generate Wall Codes</b>.</div></div>
+        <div class="col-12">
+          <div class="alert alert-info">
+            <i class="fa fa-info-circle me-2"></i>No wall codes yet. Click <b>Generate Wall Codes</b>.
+          </div>
+        </div>
       <?php endif; ?>
     </div>
   </div>
@@ -297,5 +521,6 @@ document.querySelectorAll('.user-qr').forEach(el=>{
   new QRCode(el, {text: c, width:140, height:140, correctLevel: QRCode.CorrectLevel.H});
 });
 </script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
